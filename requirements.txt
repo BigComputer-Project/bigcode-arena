@@ -1,9 +1,6 @@
 # Core dependencies for BigCodeArena
 gradio
 gradio-sandboxcomponent
-tree-sitter
-tree-sitter-javascript
-tree-sitter-typescript
 # HTTP and API handling
 requests
 # AWS SDK
@@ -16,8 +13,17 @@ tqdm
 shortuuid
 # Image processing (for vision models)
 Pillow
-# Development and testing (optional)
 pytest
 black
 flake8
-treee
+tree-sitter
+tree-sitter-javascript
+tree-sitter-java
+tree-sitter-python
+tree-sitter-go
+tree-sitter-rust
+tree-sitter-php
+tree-sitter-typescript
+tree-sitter-c
+e2b-code-interpreter
+azure-storage-blob
