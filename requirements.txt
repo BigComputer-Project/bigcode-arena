@@ -20,5 +20,5 @@ tree-sitter-rust
 tree-sitter-php
 tree-sitter-typescript
 tree-sitter-c
-e2b-code-interpreter
+e2b-code-interpreter==1.5.2
 azure-storage-blob

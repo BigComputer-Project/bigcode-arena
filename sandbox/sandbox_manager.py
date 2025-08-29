@@ -12,7 +12,7 @@ import threading
 from httpcore import ReadTimeout
 import queue
 
-from .constants import E2B_API_KEY, SANDBOX_TEMPLATE_ID, SANDBOX_NGINX_PORT, SANDBOX_RETRY_COUNT, SANDBOX_TIMEOUT_SECONDS, INSTALLED_PYPI_PACKAGES
+from .constants import SANDBOX_TEMPLATE_ID, SANDBOX_NGINX_PORT, SANDBOX_RETRY_COUNT, SANDBOX_TIMEOUT_SECONDS, INSTALLED_PYPI_PACKAGES
 
 
 def create_sandbox(template: str = SANDBOX_TEMPLATE_ID) -> Sandbox:
@@ -24,7 +24,6 @@ def create_sandbox(template: str = SANDBOX_TEMPLATE_ID) -> Sandbox:
     for attempt in range(1, SANDBOX_RETRY_COUNT + 1):
         try:
             return Sandbox(
-                api_key=E2B_API_KEY,
                 domain="e2b-foxtrot.dev",
                 template=template,
                 timeout=SANDBOX_TIMEOUT_SECONDS,
@@ -47,8 +46,7 @@ def reuse_or_create_sandbox(sandbox_id: str | None, template: str = SANDBOX_TEMP
         try:
             sandbox = Sandbox.connect(
                 sandbox_id=sandbox_id,
-                api_key=E2B_API_KEY,
-            )
+)
             if not sandbox.is_running(request_timeout=5):
                 sandbox = None
         except Exception as e:

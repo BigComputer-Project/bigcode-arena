@@ -29,7 +29,8 @@ from sandbox.code_runner import (
     run_java_code,
     run_golang_code,
     run_rust_code,
-    mermaid_to_html
+    mermaid_to_html,
+    javascript_to_html
 )
 
 # Create a proper sandbox state structure
@@ -504,10 +505,9 @@ def build_ui():
                     )
                 with gr.Column(scale=1):
                     max_tokens = gr.Slider(
-                        minimum=100,
-                        maximum=4000,
-                        value=1000,
-                        step=100,
+                        minimum=500,
+                        maximum=32768,
+                        value=2048,
                         label="Max Tokens"
                     )
         

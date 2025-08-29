@@ -376,9 +376,7 @@ def run_code_interpreter(code: str, code_language: str | None, code_dependencies
     Args:
         code (str): The code to be executed.
     """
-    sandbox = CodeSandbox(
-        api_key=E2B_API_KEY,
-    )
+    sandbox = CodeSandbox()
 
     sandbox.commands.run("pip install uv",
                          timeout=60 * 3,
