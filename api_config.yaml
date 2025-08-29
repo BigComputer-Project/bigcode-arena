@@ -1,0 +1,216 @@
+gpt-4o-mini-2024-07-18:
+    model: gpt-4o-mini-2024-07-18
+    endpoints: null
+    api_type: openai
+    parallel: 32
+    max_tokens: 8192
+    temperature: 0.0
+
+gpt-4o-2024-11-20:
+    model: gpt-4o-2024-11-20
+    endpoints: null
+    api_type: openai
+    parallel: 32
+    max_tokens: 8192
+    temperature: 0.0
+
+# o1-2024-12-17:
+#     model: o1-2024-12-17
+#     endpoints: null
+#     api_type: openai
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 0.0
+
+# o4-mini-2025-04-16:
+#     model: o4-mini-2025-04-16
+#     endpoints: null
+#     api_type: openai_thinking
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 1.0
+
+# o3-mini-2025-01-31:
+#     model: o3-mini-2025-01-31
+#     endpoints: null
+#     api_type: openai_thinking
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 0.0
+
+# gemini-2.0-flash-001:
+#     model: google/gemini-2.0-flash-001
+#     endpoints:
+#         - api_base: https://openrouter.ai/api/v1
+#           api_key: ${OPENROUTER_API_KEY}
+#     api_type: openai
+#     parallel: 32
+#     max_tokens: 81920
+#     temperature: 0.0
+
+# gemini-2.5-pro:
+#     model: google/gemini-2.5-pro
+#     endpoints:
+#         - api_base: https://openrouter.ai/api/v1
+#           api_key: ${OPENROUTER_API_KEY}
+#     api_type: openai
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 0.0
+
+# gemini-2.5-flash:
+#     model: google/gemini-2.5-flash
+#     endpoints:
+#         - api_base: https://openrouter.ai/api/v1
+#           api_key: ${OPENROUTER_API_KEY}
+#     api_type: openai
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 0.0
+
+# claude35_haiku:
+#     model: bedrock/anthropic.claude-3-5-haiku-20241022-v1:0
+#     endpoints: null
+#     api_type: litellm
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 0.0
+
+# claude35_sonnet:
+#     model: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
+#     endpoints: null
+#     api_type: litellm
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 0.0
+
+# claude37_sonnet:
+#     model: bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0
+#     endpoints: null
+#     api_type: litellm
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 0.0
+
+# qwen3-coder:
+#     model: qwen/qwen3-coder
+#     endpoints:
+#         - api_base: https://openrouter.ai/api/v1
+#           api_key: ${OPENROUTER_API_KEY}
+#     api_type: openai
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 0.0
+
+# kimi-k2:
+#     model: moonshotai/kimi-k2
+#     endpoints:
+#         - api_base: https://openrouter.ai/api/v1
+#           api_key: ${OPENROUTER_API_KEY}
+#     api_type: openai
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 0.0
+
+# claude-4-sonnet:
+#     model: bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0
+#     endpoints: null
+#     api_type: litellm
+#     parallel: 16
+#     max_tokens: 8192
+#     temperature: 0.0
+
+# claude-4-opus:
+#     model: bedrock/us.anthropic.claude-opus-4-20250514-v1:0
+#     endpoints: null
+#     api_type: litellm
+#     parallel: 16
+#     max_tokens: 8192
+#     temperature: 0.0
+
+# gpt-oss-120b:
+#     model: openai/gpt-oss-120b
+#     endpoints:
+#         - api_base: https://openrouter.ai/api/v1
+#           api_key: ${OPENROUTER_API_KEY}
+#     api_type: openai_thinking
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 1.0
+
+# gpt-oss-20b:
+#     model: openai/gpt-oss-20b
+#     endpoints:
+#         - api_base: https://openrouter.ai/api/v1
+#           api_key: ${OPENROUTER_API_KEY}
+#     api_type: openai_thinking
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 1.0
+
+# deepseek-chat-v3-0324:
+#     model: deepseek/deepseek-chat-v3-0324
+#     endpoints:
+#         - api_base: https://openrouter.ai/api/v1
+#           api_key: ${OPENROUTER_API_KEY}
+#     api_type: openai
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 0.0
+
+# deepseek-chat-v3.1:
+#     model: deepseek-chat
+#     endpoints:
+#         - api_base: https://api.deepseek.com
+#           api_key: ${DEEPSEEK_API_KEY}
+#     api_type: openai
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 0.0
+
+# glm-4.5:
+#     model: z-ai/glm-4.5
+#     endpoints:
+#         - api_base: https://openrouter.ai/api/v1
+#           api_key: ${OPENROUTER_API_KEY}
+#     api_type: openai
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 0.0
+
+# gpt-4.1-2025-04-14:
+#     model: gpt-4.1-2025-04-14
+#     endpoints: null
+#     api_type: openai
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 0.0
+
+
+# deepseek-r1-0528:
+#     model: deepseek/deepseek-r1-0528
+#     endpoints:
+#         - api_base: https://openrouter.ai/api/v1
+#           api_key: ${OPENROUTER_API_KEY}
+#     api_type: openai_thinking
+#     parallel: 32
+#     max_tokens: 81920
+#     temperature: 1.0
+
+# gpt-5-2025-08-07:
+#     model: gpt-5-2025-08-07
+#     endpoints: null
+#     api_type: openai_thinking
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 1.0
+
+# grok-code:
+#     model: x-ai/grok-code-fast-1
+#     endpoints:
+#         - api_base: https://openrouter.ai/api/v1
+#           api_key: ${OPENROUTER_API_KEY}
+#     api_type: openai_thinking
+#     parallel: 32
+#     max_tokens: 8192
+#     temperature: 1.0

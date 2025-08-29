@@ -1,0 +1,21 @@
+# Core dependencies for BigCodeArena
+gradio
+gradio-sandboxcomponent
+# HTTP and API handling
+requests
+# AWS SDK
+boto3
+# YAML configuration
+PyYAML
+# Progress bars and utilities
+tqdm
+# UUID generation
+shortuuid>=1.0.11
+# Image processing (for vision models)
+Pillow>=10.0.0
+# Optional: FastChat (if using conversation templates)
+# fastchat>=0.2.0
+# Development and testing (optional)
+pytest>=7.4.0
+black>=23.0.0
+flake8>=6.0.0
