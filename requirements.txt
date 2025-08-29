@@ -1,6 +1,9 @@
 # Core dependencies for BigCodeArena
 gradio
 gradio-sandboxcomponent
+tree-sitter
+tree-sitter-javascript
+tree-sitter-typescript
 # HTTP and API handling
 requests
 # AWS SDK
@@ -10,12 +13,11 @@ PyYAML
 # Progress bars and utilities
 tqdm
 # UUID generation
-shortuuid>=1.0.11
+shortuuid
 # Image processing (for vision models)
-Pillow>=10.0.0
-# Optional: FastChat (if using conversation templates)
-# fastchat>=0.2.0
+Pillow
 # Development and testing (optional)
-pytest>=7.4.0
-black>=23.0.0
-flake8>=6.0.0
+pytest
+black
+flake8
+treee
