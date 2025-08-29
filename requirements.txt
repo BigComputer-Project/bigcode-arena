@@ -1,17 +1,12 @@
 # Core dependencies for BigCodeArena
 gradio
 gradio-sandboxcomponent
-# HTTP and API handling
 requests
-# AWS SDK
+openai
 boto3
-# YAML configuration
 PyYAML
-# Progress bars and utilities
 tqdm
-# UUID generation
 shortuuid
-# Image processing (for vision models)
 Pillow
 pytest
 black
