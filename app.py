@@ -5,6 +5,12 @@ Focuses on core functionality: two models, automatic code extraction, and execut
 
 import gradio as gr
 from gradio_sandboxcomponent import SandboxComponent
+import pandas as pd
+import datetime
+import time
+import os
+from datasets import Dataset, load_dataset
+import threading
 
 # Import completion utilities
 from completion import make_config, registered_api_completion
@@ -83,6 +89,14 @@ def load_api_config():
 api_config = load_api_config()
 available_models = list(api_config.keys()) if api_config else []
 
+# HuggingFace dataset configuration
+HF_DATASET_NAME = os.getenv("HF_DATASET_NAME")
+HF_TOKEN = os.getenv("HF_TOKEN")
+
+# Global ranking data cache
+ranking_data = None
+ranking_last_updated = None
+
 def get_random_models():
     """Get two random models from available models"""
     if len(available_models) < 2:
@@ -97,7 +111,8 @@ def create_chat_state(model_name: str) -> dict:
     return {
         "model_name": model_name,
         "messages": [],
-        "sandbox_state": create_sandbox_state()
+        "sandbox_state": create_sandbox_state(),
+        "has_output": False,
     }
 
 def generate_response_with_completion(state, temperature, max_tokens):
@@ -181,7 +196,7 @@ def add_text_and_generate(state0, state1, text, temperature, max_tokens, model_a
     """Add text and generate responses for both models"""
     if not text.strip():
         return state0, state1, "", "", "", "", "", "", "", "", "", "", "", ""
-    
+
     # Initialize states if needed
     if state0 is None or state1 is None:
         if state0 is None:
@@ -189,91 +204,123 @@ def add_text_and_generate(state0, state1, text, temperature, max_tokens, model_a
         if state1 is None:
             state1 = create_chat_state(model_b)
         print(f"Models: {state0['model_name']} vs {state1['model_name']}")
-    
+
     # Add user message to both states
     state0["messages"].append({"role": "user", "content": text})
     state1["messages"].append({"role": "user", "content": text})
-    
+
     # Generate responses
     state0, response0 = generate_response_with_completion(state0, temperature, max_tokens)
     state1, response1 = generate_response_with_completion(state1, temperature, max_tokens)
-    
+
     # Add the assistant responses to the message history
     state0["messages"].append({"role": "assistant", "content": response0})
     state1["messages"].append({"role": "assistant", "content": response1})
-    
+
     # Format chat history for display
     chat0 = format_chat_history(state0["messages"])
     chat1 = format_chat_history(state1["messages"])
-    
+
     # Extract code from responses for sandbox
-    sandbox_state0 = state0.get("sandbox_state", create_sandbox_state())
-    sandbox_state1 = state1.get("sandbox_state", create_sandbox_state())
-    
-    _, code0, env0 = extract_and_execute_code(response0, sandbox_state0)
-    _, code1, env1 = extract_and_execute_code(response1, sandbox_state1)
-    
+    sandbox_state0 = (
+        state0.get("sandbox_state", create_sandbox_state())
+        if state0
+        else create_sandbox_state()
+    )
+    sandbox_state1 = (
+        state1.get("sandbox_state", create_sandbox_state())
+        if state1
+        else create_sandbox_state()
+    )
+
+    sandbox_state0, code0, env0 = extract_and_execute_code(response0, sandbox_state0)
+    sandbox_state1, code1, env1 = extract_and_execute_code(response1, sandbox_state1)
+
     # Update sandbox states in the main states
-    state0["sandbox_state"] = sandbox_state0
-    state1["sandbox_state"] = sandbox_state1
-    
+    if state0 is not None:
+        state0["sandbox_state"] = sandbox_state0
+        state0["has_output"] = True
+    if state1 is not None:
+        state1["sandbox_state"] = sandbox_state1
+        state1["has_output"] = True
+
     # Clear previous sandbox outputs when new message is sent
     sandbox_output0 = ""
     sandbox_output1 = ""
     sandbox_component_update0 = gr.update(visible=False)
     sandbox_component_update1 = gr.update(visible=False)
-    
+
     # Also clear the sandbox view components to show fresh results
     sandbox_view_a = ""
     sandbox_view_b = ""
-    
+
     if code0.strip():
         # Get the dependencies from the sandbox state
         dependencies0 = sandbox_state0.get('code_dependencies', ([], []))
         print(f"DEBUG: Running code0 with dependencies: {dependencies0}")
         sandbox_url0, sandbox_output0, sandbox_error0 = run_sandbox_code(sandbox_state0, code0, dependencies0)
         print(f"DEBUG: Code0 result - URL: {sandbox_url0}, Output: {sandbox_output0[:100] if sandbox_output0 else 'None'}, Error: {sandbox_error0[:100] if sandbox_error0 else 'None'}")
-        
+
         # Check if this is a web-based environment that should use SandboxComponent
         env_type = sandbox_state0.get('auto_selected_sandbox_environment') or sandbox_state0.get('sandbox_environment')
         print(f"DEBUG: Model A environment type: {env_type}")
         # Use the URL directly from the function return
         if sandbox_url0:
             sandbox_component_update0 = gr.update(value=(sandbox_url0, True, []), visible=True)
-        
+
         # Update sandbox view with output and errors
         if sandbox_output0:
             sandbox_view_a += f"# Output\n{sandbox_output0}"
         if sandbox_error0:
             sandbox_view_a += f"# Errors\n{sandbox_error0}"
-    
+
     if code1.strip():
         # Get the dependencies from the sandbox state
         dependencies1 = sandbox_state1.get('code_dependencies', ([], []))
         print(f"DEBUG: Running code1 with dependencies: {dependencies1}")
         sandbox_url1, sandbox_output1, sandbox_error1 = run_sandbox_code(sandbox_state1, code1, dependencies1)
         print(f"DEBUG: Code1 result - URL: {sandbox_url1}, Output: {sandbox_output1[:100] if sandbox_output1 else 'None'}, Error: {sandbox_error1[:100] if sandbox_error1 else 'None'}")
-        
+
         # Check if this is a web-based environment that should use SandboxComponent
         env_type = sandbox_state1.get('auto_selected_sandbox_environment') or sandbox_state1.get('sandbox_environment')
         print(f"DEBUG: Model B environment type: {env_type}")
         # Use the URL directly from the function return
         if sandbox_url1:
             sandbox_component_update1 = gr.update(value=(sandbox_url1, True, []), visible=True)
-        
+
         if sandbox_output1:
             sandbox_view_b += f"## Output\n{sandbox_output1}"
         if sandbox_error1:
             sandbox_view_b += f"## Errors\n{sandbox_error1}"
-    
+
     # Calculate conversation statistics
-    turn_count_a = len([msg for msg in state0["messages"] if msg["role"] == "assistant" and msg["content"]])
-    turn_count_b = len([msg for msg in state1["messages"] if msg["role"] == "assistant" and msg["content"]])
-    
+    turn_count_a = (
+        len(
+            [
+                msg
+                for msg in state0["messages"]
+                if msg["role"] == "assistant" and msg["content"]
+            ]
+        )
+        if state0
+        else 0
+    )
+    turn_count_b = (
+        len(
+            [
+                msg
+                for msg in state1["messages"]
+                if msg["role"] == "assistant" and msg["content"]
+            ]
+        )
+        if state1
+        else 0
+    )
+
     # Format conversation statistics
-    chat_stats_a = f"**Conversation:** {turn_count_a} turns | **Total Messages:** {len(state0['messages'])}"
-    chat_stats_b = f"**Conversation:** {turn_count_b} turns | **Total Messages:** {len(state1['messages'])}"
-    
+    chat_stats_a = f"**Conversation:** {turn_count_a} turns | **Total Messages:** {len(state0['messages']) if state0 else 0}"
+    chat_stats_b = f"**Conversation:** {turn_count_b} turns | **Total Messages:** {len(state1['messages']) if state1 else 0}"
+
     return state0, state1, chat0, chat1, response0, response1, code0, code1, env0, env1, sandbox_state0, sandbox_state1, sandbox_output0, sandbox_output1, sandbox_component_update0, sandbox_component_update1, chat_stats_a, chat_stats_b, sandbox_view_a, sandbox_view_b
 
 def format_chat_history(messages):
@@ -302,224 +349,646 @@ def clear_chat(state0, state1):
         reset_sandbox_state(state0["sandbox_state"])
     if state1 and "sandbox_state" in state1:
         reset_sandbox_state(state1["sandbox_state"])
-    
+
     # Get current model names for display
     model_a, model_b = get_random_models()
-    
-    return None, None, "", "", "", "", "", "", "", "", "", "", "", "", gr.update(visible=False), gr.update(visible=False), "**Conversation:** 0 turns | **Total Messages:** 0", "**Conversation:** 0 turns | **Total Messages:** 0", "", "", f"**Model A:** {model_a}", f"**Model B:** {model_b}"
+
+    return (
+        None,
+        None,
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        gr.update(visible=False),
+        gr.update(visible=False),
+        "**Conversation:** 0 turns | **Total Messages:** 0",
+        "**Conversation:** 0 turns | **Total Messages:** 0",
+        "",
+        "",
+        f"**Model A:** {model_a}",
+        f"**Model B:** {model_b}",
+        gr.update(visible=False),
+        gr.update(visible=False),
+        gr.update(visible=False),
+    )
+
+
+def handle_vote(state0, state1, vote_type):
+    """Handle vote submission"""
+    if (
+        not state0
+        or not state1
+        or not state0.get("has_output")
+        or not state1.get("has_output")
+    ):
+        return (
+            "No output to vote on!",
+            gr.update(),
+            "**Last Updated:** No data available",
+        )
+
+    # Get the last user message and responses
+    user_message = ""
+    response_a = ""
+    response_b = ""
+
+    for msg in reversed(state0["messages"]):
+        if msg["role"] == "user":
+            user_message = msg["content"]
+            break
+
+    for msg in reversed(state0["messages"]):
+        if msg["role"] == "assistant":
+            response_a = msg["content"]
+            break
+
+    for msg in reversed(state1["messages"]):
+        if msg["role"] == "assistant":
+            response_b = msg["content"]
+            break
+
+    # Save vote
+    success, message = save_vote_to_hf(
+        state0["model_name"],
+        state1["model_name"],
+        user_message,
+        response_a,
+        response_b,
+        vote_type,
+    )
+
+    if success:
+        # Refresh ranking data and get updated table
+        df = load_ranking_data()
+        last_update = (
+            ranking_last_updated.strftime("%Y-%m-%d %H:%M:%S")
+            if ranking_last_updated
+            else "Unknown"
+        )
+        # Clear states after successful vote
+        return (
+            message + " Clearing conversation...",
+            gr.update(value=df),
+            f"**Last Updated:** {last_update}",
+        )
+    else:
+        return message, gr.update(), "**Last Updated:** Error occurred"
+
 
 def run_sandbox_code(sandbox_state: dict, code: str, dependencies: tuple) -> tuple[str, str, str]:
     """Run code in the appropriate sandbox environment"""
     if not code.strip():
         return "", "", "No code to run"
-    
+
     # Update sandbox state
     sandbox_state['code_to_execute'] = code
     sandbox_state['code_dependencies'] = dependencies
-    
+
     # Determine environment
     env = sandbox_state.get('auto_selected_sandbox_environment') or sandbox_state.get('sandbox_environment')
-    
+
     try:
         if env == SandboxEnvironment.HTML:
             sandbox_url, sandbox_id, stderr = run_html_sandbox(code, dependencies, sandbox_state.get('sandbox_id'))
             sandbox_state['sandbox_id'] = sandbox_id
             return sandbox_url, "", stderr
-            
+
         elif env == SandboxEnvironment.REACT:
             result = run_react_sandbox(code, dependencies, sandbox_state.get('sandbox_id'))
             sandbox_state['sandbox_id'] = result['sandbox_id']
             return result['sandbox_url'], "", result['stderr']
-            
+
         elif env == SandboxEnvironment.VUE:
             result = run_vue_sandbox(code, dependencies, sandbox_state.get('sandbox_id'))
             sandbox_state['sandbox_id'] = result['sandbox_id']
             return result['sandbox_url'], "", result['stderr']
-            
+
         elif env == SandboxEnvironment.PYGAME:
             result = run_pygame_sandbox(code, dependencies, sandbox_state.get('sandbox_id'))
             sandbox_state['sandbox_id'] = result['sandbox_id']
             return result['sandbox_url'], "", result['stderr']
-            
+
         elif env == SandboxEnvironment.GRADIO:
             sandbox_url, sandbox_id, stderr = run_gradio_sandbox(code, dependencies, sandbox_state.get('sandbox_id'))
             sandbox_state['sandbox_id'] = sandbox_id
             return sandbox_url, "", stderr
-            
+
         elif env == SandboxEnvironment.STREAMLIT:
             sandbox_url, sandbox_id, stderr = run_streamlit_sandbox(code, dependencies, sandbox_state.get('sandbox_id'))
             sandbox_state['sandbox_id'] = sandbox_id
             return sandbox_url, "", stderr
-            
+
         elif env == SandboxEnvironment.MERMAID:
             # Convert Mermaid to HTML and run in HTML sandbox
             html_code = mermaid_to_html(code, theme='light')
             sandbox_url, sandbox_id, stderr = run_html_sandbox(html_code, dependencies, sandbox_state.get('sandbox_id'))
             sandbox_state['sandbox_id'] = sandbox_id
             return sandbox_url, "", stderr
-            
+
         elif env == SandboxEnvironment.PYTHON_RUNNER:
             output, stderr = run_code_interpreter(code, 'python', dependencies)
             return "", output, stderr
-            
+
         elif env == SandboxEnvironment.JAVASCRIPT_RUNNER:
             html_code = javascript_to_html(code)
             output, stderr = run_html_sandbox(html_code, dependencies, sandbox_state.get('sandbox_id'))
             return "", output, stderr
-            
+
         elif env == SandboxEnvironment.C_RUNNER:
             output, stderr = run_c_code(code, sandbox_state.get('sandbox_id'))
             return "", output, stderr
-            
+
         elif env == SandboxEnvironment.CPP_RUNNER:
             output, stderr = run_cpp_code(code, sandbox_state.get('sandbox_id'))
             return "", output, stderr
-            
+
         elif env == SandboxEnvironment.JAVA_RUNNER:
             output, stderr = run_java_code(code, sandbox_state.get('sandbox_id'))
             return "", output, stderr
-            
+
         elif env == SandboxEnvironment.GOLANG_RUNNER:
             output, stderr = run_golang_code(code, sandbox_state.get('sandbox_id'))
             return "", output, stderr
-            
+
         elif env == SandboxEnvironment.RUST_RUNNER:
             output, stderr = run_rust_code(code, sandbox_state.get('sandbox_id'))
             return "", output, stderr
-            
+
         else:
             # Fallback to Python runner
             output, stderr = run_code_interpreter(code, 'python', dependencies)
             return "", output, stderr
-            
+
     except Exception as e:
         return "", "", str(e)
 
 
+def save_vote_to_hf(
+    model_a, model_b, prompt, response_a, response_b, vote_result, hf_token=None
+):
+    """Save vote result to HuggingFace dataset"""
+    try:
+        # Use global token if not provided
+        token = hf_token or HF_TOKEN
+        if not token:
+            return False, "HuggingFace token not found in environment (HF_TOKEN)"
+
+        # Create vote data
+        vote_data = {
+            "timestamp": datetime.datetime.now().isoformat(),
+            "model_a": model_a,
+            "model_b": model_b,
+            "prompt": prompt,
+            "response_a": response_a,
+            "response_b": response_b,
+            "vote": vote_result,  # "left", "right", "tie", "both_bad"
+        }
+
+        # Try to load existing dataset or create new one
+        try:
+            dataset = load_dataset(HF_DATASET_NAME, split="train", token=token)
+            # Convert to pandas DataFrame - handle both Dataset and DatasetDict
+            if hasattr(dataset, "to_pandas"):
+                df = dataset.to_pandas()
+            else:
+                df = pd.DataFrame(dataset)
+            # Add new vote
+            new_df = pd.concat([df, pd.DataFrame([vote_data])], ignore_index=True)
+        except Exception:
+            # Create new dataset if it doesn't exist
+            new_df = pd.DataFrame([vote_data])
+
+        # Convert back to dataset and push
+        new_dataset = Dataset.from_pandas(new_df)
+        new_dataset.push_to_hub(HF_DATASET_NAME, token=token)
+
+        return True, "Vote saved successfully!"
+    except Exception as e:
+        return False, f"Error saving vote: {str(e)}"
+
+
+def load_ranking_data(hf_token=None):
+    """Load and calculate ranking data from HuggingFace dataset"""
+    global ranking_data, ranking_last_updated
+
+    try:
+        # Use global token if not provided
+        token = hf_token or HF_TOKEN
+        if not token:
+            return pd.DataFrame()
+
+        # Load dataset
+        dataset = load_dataset(HF_DATASET_NAME, split="train", token=token)
+        # Convert to pandas DataFrame - handle both Dataset and DatasetDict
+        if hasattr(dataset, "to_pandas"):
+            df = dataset.to_pandas()
+        else:
+            df = pd.DataFrame(dataset)
+
+        if df.empty:
+            return pd.DataFrame()
+
+        # Calculate rankings
+        model_stats = {}
+
+        for _, row in df.iterrows():
+            model_a = row["model_a"]
+            model_b = row["model_b"]
+            vote = row["vote"]
+
+            # Initialize models if not exists
+            if model_a not in model_stats:
+                model_stats[model_a] = {"wins": 0, "losses": 0, "ties": 0, "total": 0}
+            if model_b not in model_stats:
+                model_stats[model_b] = {"wins": 0, "losses": 0, "ties": 0, "total": 0}
+
+            # Update stats based on vote
+            if vote == "left":  # Model A wins
+                model_stats[model_a]["wins"] += 1
+                model_stats[model_b]["losses"] += 1
+            elif vote == "right":  # Model B wins
+                model_stats[model_b]["wins"] += 1
+                model_stats[model_a]["losses"] += 1
+            elif vote == "tie":
+                model_stats[model_a]["ties"] += 1
+                model_stats[model_b]["ties"] += 1
+            # both_bad doesn't count as win/loss for either
+
+            model_stats[model_a]["total"] += 1
+            model_stats[model_b]["total"] += 1
+
+        # Convert to DataFrame and calculate win rate
+        ranking_list = []
+        for model, stats in model_stats.items():
+            win_rate = (
+                (stats["wins"] + stats["ties"]) / max(stats["total"], 1) * 100
+            )
+            ranking_list.append(
+                {
+                    "Model": model,
+                    "Win Rate (%)": round(win_rate, 1),
+                    "Wins": stats["wins"],
+                    "Losses": stats["losses"],
+                    "Ties": stats["ties"],
+                    "Total Battles": stats["total"],
+                }
+            )
+
+        # Sort by win rate
+        ranking_df = pd.DataFrame(ranking_list).sort_values(
+            "Win Rate (%)", ascending=False
+        )
+        ranking_df["Rank"] = range(1, len(ranking_df) + 1)
+
+        # Reorder columns
+        ranking_df = ranking_df[
+            ["Rank", "Model", "Win Rate (%)", "Wins", "Losses", "Ties", "Total Battles"]
+        ]
+
+        ranking_data = ranking_df
+        ranking_last_updated = datetime.datetime.now()
+
+        return ranking_df
+    except Exception as e:
+        print(f"Error loading ranking data: {e}")
+        return pd.DataFrame()
+
+
+def auto_refresh_ranking():
+    """Auto refresh ranking data every 5 minutes"""
+
+    def refresh_loop():
+        while True:
+            time.sleep(300)  # 5 minutes
+            load_ranking_data()
+
+    thread = threading.Thread(target=refresh_loop, daemon=True)
+    thread.start()
+
 
 def build_ui():
     """Build a UI for the coding arena with integrated sandbox"""
-    
+
     # Get random models for this session
     model_a, model_b = get_random_models()
-    
+
     with gr.Blocks(title="BigCodeArena") as demo:
         gr.Markdown("# BigCodeArena - Start Your Vibe Coding!")
-        
-        # Model display (non-interactive)
-        with gr.Row():
-            with gr.Column():
-                model_display_a = gr.Markdown(f"**Model A:** {model_a}", visible=False)
-            with gr.Column():
-                model_display_b = gr.Markdown(f"**Model B:** {model_b}", visible=False)
-        
-        # Sandbox section with tabs for each model - Collapsible and open by default
-        with gr.Accordion("🏗️ Code Execution & Sandbox", open=True):
-            
-            with gr.Row():
-                # Model A Sandbox
-                with gr.Column():
-                    gr.Markdown("### Model A Sandbox")
-                    with gr.Tabs():
-                        with gr.Tab("View"):
-                            sandbox_view_a = gr.Markdown("**Sandbox output will appear here automatically**")
-                            sandbox_component_a = SandboxComponent(
-                                value=("", False, []),
-                                label="Model A Sandbox",
-                                visible=False
-                            )
-                        with gr.Tab("Code"):
-                            code_a = gr.Code(
-                                label="Extracted Code",
-                                language="python",
-                                lines=8,
-                                interactive=False
-                            )
-                
-                # Model B Sandbox
-                with gr.Column():
-                    gr.Markdown("### Model B Sandbox")
-                    with gr.Tabs():
-                        with gr.Tab("View"):
-                            sandbox_view_b = gr.Markdown("**Sandbox output will appear here automatically**")
-                            sandbox_component_b = SandboxComponent(
-                                value=("", False, []),
-                                label="Model B Sandbox",
-                                visible=False
-                            )
-                        with gr.Tab("Code"):
-                            code_b = gr.Code(
-                                label="Extracted Code",
-                                language="python",
-                                lines=8,
-                                interactive=False
-                            )
 
-        # Main chat interface - Collapsible and hidden by default
-        with gr.Accordion("💬 Chat Interface", open=False):
-            with gr.Row():
-                with gr.Column():
-                    gr.Markdown("## Model A")
-                    chatbot_a = gr.Chatbot(
-                        label="Model A",
-                        height=300,
-                        show_copy_button=True,
-                        type="messages"
+        # Main tabs
+        with gr.Tabs():
+            # Arena Tab
+            with gr.Tab("🥊 Arena", id="arena"):
+
+                # Model display (non-interactive)
+                with gr.Row():
+                    with gr.Column():
+                        model_display_a = gr.Markdown(
+                            f"**Model A:** {model_a}", visible=False
+                        )
+                    with gr.Column():
+                        model_display_b = gr.Markdown(
+                            f"**Model B:** {model_b}", visible=False
+                        )
+
+                # Sandbox section with tabs for each model - Collapsible and open by default
+                with gr.Accordion("🏗️ Code Execution & Sandbox", open=True):
+
+                    with gr.Row():
+                        # Model A Sandbox
+                        with gr.Column():
+                            gr.Markdown("### Model A Sandbox")
+                            with gr.Tabs():
+                                with gr.Tab("View"):
+                                    sandbox_view_a = gr.Markdown(
+                                        "**Sandbox output will appear here automatically**"
+                                    )
+                                    sandbox_component_a = SandboxComponent(
+                                        value=("", False, []),
+                                        label="Model A Sandbox",
+                                        visible=False,
+                                    )
+                                with gr.Tab("Code"):
+                                    code_a = gr.Code(
+                                        label="Extracted Code",
+                                        language="python",
+                                        lines=8,
+                                        interactive=False,
+                                    )
+
+                        # Model B Sandbox
+                        with gr.Column():
+                            gr.Markdown("### Model B Sandbox")
+                            with gr.Tabs():
+                                with gr.Tab("View"):
+                                    sandbox_view_b = gr.Markdown(
+                                        "**Sandbox output will appear here automatically**"
+                                    )
+                                    sandbox_component_b = SandboxComponent(
+                                        value=("", False, []),
+                                        label="Model B Sandbox",
+                                        visible=False,
+                                    )
+                                with gr.Tab("Code"):
+                                    code_b = gr.Code(
+                                        label="Extracted Code",
+                                        language="python",
+                                        lines=8,
+                                        interactive=False,
+                                    )
+
+                # Vote buttons section - only visible after output
+                with gr.Row(visible=False) as vote_section:
+                    gr.Markdown("### 🗳️ Which response is better?")
+                with gr.Row(visible=False) as vote_buttons_row:
+                    vote_left_btn = gr.Button(
+                        "👍 A is Better", variant="primary", size="lg"
                     )
-                    chat_stats_a = gr.Markdown("**Conversation:** 0 turns")
-                
-                with gr.Column():
-                    gr.Markdown("## Model B")
-                    chatbot_b = gr.Chatbot(
-                        label="Model B", 
-                        height=300,
-                        show_copy_button=True,
-                        type="messages"
+                    vote_tie_btn = gr.Button(
+                        "🤝 It's a Tie", variant="secondary", size="lg"
                     )
-                    chat_stats_b = gr.Markdown("**Conversation:** 0 turns")
-        
-        # Input section
-        with gr.Row():
-            text_input = gr.Textbox(
-                label="Enter your coding prompt",
-                placeholder="e.g., 'Write a Python function to calculate fibonacci numbers'",
-                lines=1
-            )
-        
-        # Control buttons
-        with gr.Row():
-            send_btn = gr.Button("🚀 Send to Both Models", variant="primary", size="lg")
-            clear_btn = gr.Button("🗑️ Clear Chat", variant="secondary")
-            refresh_models_btn = gr.Button("🔄 New Random Models", variant="secondary")
-        
-        # Advanced Settings (Collapsible)
-        with gr.Accordion("⚙️ Advanced Settings", open=False):
-            with gr.Row():
-                with gr.Column(scale=1):
-                    temperature = gr.Slider(
-                        minimum=0.0,
-                        maximum=1.0,
-                        value=0.7,
-                        step=0.1,
-                        label="Temperature"
+                    vote_both_bad_btn = gr.Button(
+                        "👎 Both are Bad", variant="secondary", size="lg"
                     )
-                with gr.Column(scale=1):
-                    max_tokens = gr.Slider(
-                        minimum=500,
-                        maximum=32768,
-                        value=2048,
-                        label="Max Tokens"
+                    vote_right_btn = gr.Button(
+                        "👍 B is Better", variant="primary", size="lg"
                     )
-        
+
+                # Vote status message
+                vote_status = gr.Markdown("", visible=False)
+
+                # Main chat interface - Collapsible and hidden by default
+                with gr.Accordion("💬 Chat Interface", open=False):
+                    with gr.Row():
+                        with gr.Column():
+                            gr.Markdown("## Model A")
+                            chatbot_a = gr.Chatbot(
+                                label="Model A",
+                                height=300,
+                                show_copy_button=True,
+                                type="messages",
+                            )
+                            chat_stats_a = gr.Markdown("**Conversation:** 0 turns")
+
+                        with gr.Column():
+                            gr.Markdown("## Model B")
+                            chatbot_b = gr.Chatbot(
+                                label="Model B",
+                                height=300,
+                                show_copy_button=True,
+                                type="messages",
+                            )
+                            chat_stats_b = gr.Markdown("**Conversation:** 0 turns")
+
+                # Input section
+                with gr.Row():
+                    text_input = gr.Textbox(
+                        label="Enter your coding prompt",
+                        placeholder="e.g., 'Write a Python function to calculate fibonacci numbers'",
+                        lines=1,
+                    )
+
+                # Control buttons
+                with gr.Row():
+                    send_btn = gr.Button(
+                        "🚀 Send to Both Models", variant="primary", size="lg"
+                    )
+                    clear_btn = gr.Button("🗑️ Clear Chat", variant="secondary")
+                    refresh_models_btn = gr.Button(
+                        "🔄 New Random Models", variant="secondary"
+                    )
+
+                # Advanced Settings (Collapsible)
+                with gr.Accordion("⚙️ Advanced Settings", open=False):
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            temperature = gr.Slider(
+                                minimum=0.0,
+                                maximum=1.0,
+                                value=0.7,
+                                step=0.1,
+                                label="Temperature",
+                            )
+                        with gr.Column(scale=1):
+                            max_tokens = gr.Slider(
+                                minimum=500,
+                                maximum=32768,
+                                value=2048,
+                                label="Max Tokens",
+                            )
+                # Examples
+                gr.Examples(
+                    examples=[
+                        [
+                            "使用SVG绘制春节主题的动态图案，包括：1）一个红色的灯笼，带有金色的流苏 2）一个金色的福字，使用书法字体 3）背景添加一些烟花效果 4）在灯笼和福字周围添加一些祥云图案。确保图案布局美观，颜色搭配符合春节传统风格。"
+                        ],
+                        [
+                            "SVGを使用して日本の伝統的な和柄パターンを描画してください。1）波紋（さざなみ）模様 2）市松模様 3）麻の葉模様 4）雷文（らいもん）模様を含めてください。色は伝統的な日本の色（藍色、朱色、金色など）を使用し、レイアウトはバランスよく配置してください。"
+                        ],
+                        [
+                            "Write HTML with P5.js that simulates 25 particles in a vacuum space of a cylindrical container, bouncing within its boundaries. Use different colors for each ball and ensure they leave a trail showing their movement. Add a slow rotation of the container to give better view of what's going on in the scene. Make sure to create proper collision detection and physic rules to ensure particles remain in the container. Add an external spherical container. Add a slow zoom in and zoom out effect to the whole scene."
+                        ],
+                        [
+                            "Write a Python script to scrape NVIDIA's stock price for the past month using the yfinance library. Clean the data and create an interactive visualization using Matplotlib. Include: 1) A candlestick chart showing daily price movements 2) A line chart with 7-day and 30-day moving averages. Add hover tooltips showing exact values and date. Make the layout professional with proper titles and axis labels."
+                        ],
+                        [
+                            "Write a Python script that uses the Gradio library to create a functional calculator. The calculator should support basic arithmetic operations: addition, subtraction, multiplication, and division. It should have two input fields for numbers and a dropdown menu to select the operation."
+                        ],
+                        [
+                            "Write a Todo list app using React.js. The app should allow users to add, delete, and mark tasks as completed. Include features like filtering tasks by status (completed, active), sorting tasks by priority, and displaying the total number of tasks."
+                        ],
+                        [
+                            "Write a Python script using the Streamlit library to create a web application for uploading and displaying files. The app should allow users to upload files of type .csv or .txt. If a .csv file is uploaded, display its contents as a table using Streamlit's st.dataframe() method. If a .txt file is uploaded, display its content as plain text."
+                        ],
+                        [
+                            "Write a Python function to solve the Trapping Rain Water problem. The function should take a list of non-negative integers representing the height of bars in a histogram and return the total amount of water trapped between the bars after raining. Use an efficient algorithm with a time complexity of O(n)."
+                        ],
+                        [
+                            "Create a simple Pygame script for a game where the player controls a bouncing ball that changes direction when it collides with the edges of the window. Add functionality for the player to control a paddle using arrow keys, aiming to keep the ball from touching the bottom of the screen. Include basic collision detection and a scoring system that increases as the ball bounces off the paddle. You need to add clickable buttons to start the game, and reset the game."
+                        ],
+                        [
+                            "Create a financial management Dashboard using Vue.js, focusing on local data handling without APIs. Include features like a clean dashboard for tracking income and expenses, dynamic charts for visualizing finances, and a budget planner. Implement functionalities for adding, editing, and deleting transactions, as well as filtering by date or category. Ensure responsive design and smooth user interaction for an intuitive experience."
+                        ],
+                        [
+                            "Create a Mermaid diagram to visualize a flowchart of a user login process. Include the following steps: User enters login credentials; Credentials are validated; If valid, the user is directed to the dashboard; If invalid, an error message is shown, and the user can retry or reset the password."
+                        ],
+                        [
+                            "Write a Python function to calculate the Fibonacci sequence up to n numbers. Then write test cases to verify the function works correctly for edge cases like negative numbers, zero, and large inputs."
+                        ],
+                        [
+                            "Build an HTML page for a Kanban board with three columns with Vue.js: To Do, In Progress, and Done. Each column should allow adding, moving, and deleting tasks. Implement drag-and-drop functionality using Vue Draggable and persist the state using Vuex."
+                        ],
+                        [
+                            "Develop a Streamlit app that takes a CSV file as input and provides: 1) Basic statistics about the data 2) Interactive visualizations using Plotly 3) A data cleaning interface with options to handle missing values 4) An option to download the cleaned data."
+                        ],
+                        [
+                            "Write an HTML page with embedded JavaScript that creates an interactive periodic table. Each element should display its properties on hover and allow filtering by category (metals, non-metals, etc.). Include a search bar to find elements by name or symbol."
+                        ],
+                        [
+                            "Here's a Python function that sorts a list of dictionaries by a specified key:\n\n```python\ndef sort_dicts(data, key):\n    return sorted(data, key=lambda x: x[key])\n```\n\nWrite test cases to verify the function works correctly for edge cases like empty lists, missing keys, and different data types. If you use unittest, please use `unittest.main(argv=['first-arg-is-ignored'], exit=False)` to run the tests."
+                        ],
+                        [
+                            "Create a React component for a fitness tracker that shows: 1) Daily step count 2) Calories burned 3) Distance walked 4) A progress bar for daily goals."
+                        ],
+                        [
+                            "Build a Vue.js dashboard for monitoring server health. Include: 1) Real-time CPU and memory usage graphs 2) Disk space visualization 3) Network activity monitor 4) Alerts for critical thresholds."
+                        ],
+                        [
+                            "Write a C program that calculates and prints the first 100 prime numbers in a formatted table with 10 numbers per row. Include a function to check if a number is prime and use it in your solution."
+                        ],
+                        [
+                            "Write a C++ program that implements a simple calculator using object-oriented programming. Create a Calculator class with methods for addition, subtraction, multiplication, and division. Include error handling for division by zero."
+                        ],
+                        [
+                            "Write a Rust program that generates and prints a Pascal's Triangle with 10 rows. Format the output to center-align the numbers in each row."
+                        ],
+                        [
+                            "Write a Java program that simulates a simple bank account system. Create a BankAccount class with methods for deposit, withdrawal, and balance inquiry. Include error handling for insufficient funds and demonstrate its usage with a few transactions."
+                        ],
+                        [
+                            "Write a Go program that calculates and prints the Fibonacci sequence up to the 50th number. Format the output in a table with 5 numbers per row and include the index of each Fibonacci number."
+                        ],
+                        [
+                            "Write a C program that calculates and prints a histogram of letter frequencies from a predefined string. Use ASCII art to display the histogram vertically."
+                        ],
+                        [
+                            "Write a C++ program that implements a simple stack data structure with push, pop, and peek operations. Demonstrate its usage by reversing a predefined string using the stack."
+                        ],
+                        [
+                            "Write a Rust program that calculates and prints the first 20 happy numbers. Include a function to check if a number is happy and use it in your solution."
+                        ],
+                        [
+                            "Write a Java program that implements a simple binary search algorithm. Create a sorted array of integers and demonstrate searching for different values, including cases where the value is found and not found."
+                        ],
+                        [
+                            "Write a Go program that generates and prints a multiplication table from 1 to 12. Format the output in a neat grid with proper alignment."
+                        ],
+                    ],
+                    example_labels=[
+                        "🏮 春节主题图案",
+                        "🎎 日本の伝統的な和柄パターン",
+                        "🌐 Particles in a Spherical Container",
+                        "💹 NVIDIA Stock Analysis with Matplotlib",
+                        "🧮 Calculator with Gradio",
+                        "📝 Todo List App with React.js",
+                        "📂 File Upload Web App with Streamlit",
+                        "💦 Solve Trapping Rain Water Problem",
+                        "🎮 Pygame Bouncing Ball Game",
+                        "💳 Financial Dashboard with Vue.js",
+                        "🔑 User Login Process Flowchart",
+                        "🔢 Fibonacci Sequence with Tests",
+                        "📌 Vue Kanban Board",
+                        "🧹 Streamlit Data Cleaning App",
+                        "⚗️ Interactive Periodic Table with React",
+                        "📚 Dictionary Sorting Tests in Python",
+                        "🏋️‍♂️ Fitness Tracker with React",
+                        "🖥️ Vue Server Monitoring",
+                        "🔢 Prime Numbers in C",
+                        "🧮 OOP Calculator in C++",
+                        "🔷 Pascal's Triangle in Rust",
+                        "🏛️ Bank Account Simulation in Java",
+                        "🐰 Fibonacci Sequence in Go",
+                        "📊 Letter Frequency Histogram in C",
+                        "📦 Stack Implementation in C++",
+                        "😄 Happy Numbers in Rust",
+                        "🔎 Binary Search in Java",
+                        "✖️ Multiplication Table in Go",
+                    ],
+                    examples_per_page=100,
+                    label="Example Prompts",
+                    inputs=[text_input],
+                )
+            # Ranking Tab
+            with gr.Tab("📊 Ranking", id="ranking"):
+                gr.Markdown("## 🏆 Model Leaderboard")
+                refresh_ranking_btn = gr.Button(
+                    "🔄 Refresh Ranking", variant="secondary"
+                )
+
+                ranking_table = gr.Dataframe(
+                    headers=[
+                        "Rank",
+                        "Model",
+                        "Win Rate (%)",
+                        "Wins",
+                        "Losses",
+                        "Ties",
+                        "Total Battles",
+                    ],
+                    datatype=[
+                        "number",
+                        "str",
+                        "number",
+                        "number",
+                        "number",
+                        "number",
+                        "number",
+                    ],
+                    label="Model Rankings",
+                    interactive=False,
+                    wrap=True,
+                )
+
+                ranking_last_update = gr.Markdown("**Last Updated:** Not loaded yet")
+
         # Event handlers
         # Create state variables for the run buttons
         state0_var = gr.State()
         state1_var = gr.State()
-        
+
         # Create response components (hidden but needed for outputs)
         response_a = gr.Markdown("", visible=False)
         response_b = gr.Markdown("", visible=False)
-        
+
         # Create a wrapper function that handles both the main execution and state update
         def send_and_update_state(state0, state1, text, temp, max_tok, model_a, model_b):
             print(f"DEBUG: send_and_update_state called with text: {text[:50] if text else 'None'}")
@@ -528,72 +997,95 @@ def build_ui():
             # Extract the state from the result
             new_state0, new_state1 = result[0], result[1]
             print(f"DEBUG: send_and_update_state returning new_state0: {type(new_state0)}, new_state1: {type(new_state1)}")
+
+            # Check if both models have output to show vote buttons
+            show_vote_buttons = (
+                new_state0
+                and new_state0.get("has_output", False)
+                and new_state1
+                and new_state1.get("has_output", False)
+            )
+
             # Return all the original outputs plus the updated state for run buttons
             # Make sure all outputs are properly formatted for their expected types
             return (
-                new_state0,      # state0
-                new_state1,      # state1
-                result[2],       # chatbot_a (chat0)
-                result[3],       # chatbot_b (chat1)
-                result[4],       # response_a (response0)
-                result[5],       # response_b (response1)
-                result[6],       # code_a (code0)
-                result[7],       # code_b (code1)
-                result[10],      # sandbox_state0
-                result[11],      # sandbox_state1
-                result[12],      # sandbox_output0
-                result[13],      # sandbox_output1
-                result[14],      # sandbox_component_update0
-                result[15],      # sandbox_component_update1
-                result[16],      # chat_stats_a
-                result[17],      # chat_stats_b
-                result[18],      # sandbox_view_a
-                result[19],      # sandbox_view_b
-                new_state0,      # state0_var
-                new_state1,      # state1_var
-                "",              # Clear text input
+                new_state0,  # state0
+                new_state1,  # state1
+                result[2],  # chatbot_a (chat0)
+                result[3],  # chatbot_b (chat1)
+                result[4],  # response_a (response0)
+                result[5],  # response_b (response1)
+                result[6],  # code_a (code0)
+                result[7],  # code_b (code1)
+                result[10] if len(result) > 10 else "",  # sandbox_state0
+                result[11] if len(result) > 11 else "",  # sandbox_state1
+                result[12] if len(result) > 12 else "",  # sandbox_output0
+                result[13] if len(result) > 13 else "",  # sandbox_output1
+                (
+                    result[14] if len(result) > 14 else gr.update(visible=False)
+                ),  # sandbox_component_update0
+                (
+                    result[15] if len(result) > 15 else gr.update(visible=False)
+                ),  # sandbox_component_update1
+                (
+                    result[16] if len(result) > 16 else "**Conversation:** 0 turns"
+                ),  # chat_stats_a
+                (
+                    result[17] if len(result) > 17 else "**Conversation:** 0 turns"
+                ),  # chat_stats_b
+                result[18] if len(result) > 18 else "",  # sandbox_view_a
+                result[19] if len(result) > 19 else "",  # sandbox_view_b
+                new_state0,  # state0_var
+                new_state1,  # state1_var
+                "",  # Clear text input
                 f"**Model A:** {model_a}",  # Update model display A
                 f"**Model B:** {model_b}",  # Update model display B
+                gr.update(visible=show_vote_buttons),  # vote_section
+                gr.update(visible=show_vote_buttons),  # vote_buttons_row
+                gr.update(visible=False),  # vote_status
             )
-        
+
         send_btn.click(
             fn=send_and_update_state,
             inputs=[
-                state0_var,      # state0
-                state1_var,      # state1
+                state0_var,  # state0
+                state1_var,  # state1
                 text_input,
                 temperature,
                 max_tokens,
                 gr.State(model_a),  # Use fixed model A
-                gr.State(model_b)   # Use fixed model B
+                gr.State(model_b),  # Use fixed model B
             ],
             outputs=[
-                state0_var,      # state0
-                state1_var,      # state1
+                state0_var,  # state0
+                state1_var,  # state1
                 chatbot_a,
                 chatbot_b,
                 response_a,
                 response_b,
                 code_a,
                 code_b,
-                gr.State(),      # sandbox_state0
-                gr.State(),      # sandbox_state1
+                gr.State(),  # sandbox_state0
+                gr.State(),  # sandbox_state1
                 sandbox_view_a,  # sandbox output for model A
                 sandbox_view_b,  # sandbox output for model B
                 sandbox_component_a,  # sandbox component for model A
                 sandbox_component_b,  # sandbox component for model B
-                chat_stats_a,    # Conversation statistics for model A
-                chat_stats_b,    # Conversation statistics for model B
+                chat_stats_a,  # Conversation statistics for model A
+                chat_stats_b,  # Conversation statistics for model B
                 sandbox_view_a,  # Sandbox view for model A
                 sandbox_view_b,  # Sandbox view for model B
-                state0_var,      # Updated state for run button A
-                state1_var,      # Updated state for run button B
-                text_input,      # Clear the text input after sending
-                model_display_a, # Update model display A
-                model_display_b, # Update model display B
-            ]
+                state0_var,  # Updated state for run button A
+                state1_var,  # Updated state for run button B
+                text_input,  # Clear the text input after sending
+                model_display_a,  # Update model display A
+                model_display_b,  # Update model display B
+                vote_section,  # Show/hide vote section
+                vote_buttons_row,  # Show/hide vote buttons
+                vote_status,  # Vote status message
+            ],
         )
-        
+
         clear_btn.click(
             fn=clear_chat,
             inputs=[gr.State(), gr.State()],
@@ -622,35 +1114,38 @@ def build_ui():
                 model_display_b, # Reset model display B
             ]
         )
-        
+
         # Refresh models button handler
         def refresh_models():
             new_model_a, new_model_b = get_random_models()
             return (
                 None,  # Reset state0
                 None,  # Reset state1
-                "",    # Clear chat A
-                "",    # Clear chat B
-                "",    # Clear response A
-                "",    # Clear response B
-                "",    # Clear code A
-                "",    # Clear code B
+                "",  # Clear chat A
+                "",  # Clear chat B
+                "",  # Clear response A
+                "",  # Clear response B
+                "",  # Clear code A
+                "",  # Clear code B
                 gr.State(None),  # Reset sandbox state A
                 gr.State(None),  # Reset sandbox state B
-                "",    # Clear sandbox view A
-                "",    # Clear sandbox view B
+                "",  # Clear sandbox view A
+                "",  # Clear sandbox view B
                 gr.update(visible=False),  # Hide sandbox component A
                 gr.update(visible=False),  # Hide sandbox component B
                 "**Conversation:** 0 turns | **Total Messages:** 0",  # Reset stats A
                 "**Conversation:** 0 turns | **Total Messages:** 0",  # Reset stats B
-                "",    # Clear sandbox view A
-                "",    # Clear sandbox view B
+                "",  # Clear sandbox view A
+                "",  # Clear sandbox view B
                 None,  # Reset state0_var
                 None,  # Reset state1_var
                 f"**Model A:** {new_model_a}",  # Update model display A
                 f"**Model B:** {new_model_b}",  # Update model display B
+                gr.update(visible=False),  # Hide vote section
+                gr.update(visible=False),  # Hide vote buttons
+                gr.update(visible=False),  # Clear vote status
             )
-        
+
         refresh_models_btn.click(
             fn=refresh_models,
             inputs=[],
@@ -677,76 +1172,137 @@ def build_ui():
                 state1_var,
                 model_display_a,  # Update model display A
                 model_display_b,  # Update model display B
-            ]
-        )
-        
-        # Examples
-        gr.Examples(
-            examples=[
-                ["使用SVG绘制春节主题的动态图案，包括：1）一个红色的灯笼，带有金色的流苏 2）一个金色的福字，使用书法字体 3）背景添加一些烟花效果 4）在灯笼和福字周围添加一些祥云图案。确保图案布局美观，颜色搭配符合春节传统风格。"],
-                ["SVGを使用して日本の伝統的な和柄パターンを描画してください。1）波紋（さざなみ）模様 2）市松模様 3）麻の葉模様 4）雷文（らいもん）模様を含めてください。色は伝統的な日本の色（藍色、朱色、金色など）を使用し、レイアウトはバランスよく配置してください。"],
-                ["Write HTML with P5.js that simulates 25 particles in a vacuum space of a cylindrical container, bouncing within its boundaries. Use different colors for each ball and ensure they leave a trail showing their movement. Add a slow rotation of the container to give better view of what's going on in the scene. Make sure to create proper collision detection and physic rules to ensure particles remain in the container. Add an external spherical container. Add a slow zoom in and zoom out effect to the whole scene."],
-                ["Write a Python script to scrape NVIDIA's stock price for the past month using the yfinance library. Clean the data and create an interactive visualization using Matplotlib. Include: 1) A candlestick chart showing daily price movements 2) A line chart with 7-day and 30-day moving averages. Add hover tooltips showing exact values and date. Make the layout professional with proper titles and axis labels."],
-                ["Write a Python script that uses the Gradio library to create a functional calculator. The calculator should support basic arithmetic operations: addition, subtraction, multiplication, and division. It should have two input fields for numbers and a dropdown menu to select the operation."],
-                ["Write a Todo list app using React.js. The app should allow users to add, delete, and mark tasks as completed. Include features like filtering tasks by status (completed, active), sorting tasks by priority, and displaying the total number of tasks."],
-                ["Write a Python script using the Streamlit library to create a web application for uploading and displaying files. The app should allow users to upload files of type .csv or .txt. If a .csv file is uploaded, display its contents as a table using Streamlit's st.dataframe() method. If a .txt file is uploaded, display its content as plain text."],
-                ["Write a Python function to solve the Trapping Rain Water problem. The function should take a list of non-negative integers representing the height of bars in a histogram and return the total amount of water trapped between the bars after raining. Use an efficient algorithm with a time complexity of O(n)."],
-                ["Create a simple Pygame script for a game where the player controls a bouncing ball that changes direction when it collides with the edges of the window. Add functionality for the player to control a paddle using arrow keys, aiming to keep the ball from touching the bottom of the screen. Include basic collision detection and a scoring system that increases as the ball bounces off the paddle. You need to add clickable buttons to start the game, and reset the game."],
-                ["Create a financial management Dashboard using Vue.js, focusing on local data handling without APIs. Include features like a clean dashboard for tracking income and expenses, dynamic charts for visualizing finances, and a budget planner. Implement functionalities for adding, editing, and deleting transactions, as well as filtering by date or category. Ensure responsive design and smooth user interaction for an intuitive experience."],
-                ["Create a Mermaid diagram to visualize a flowchart of a user login process. Include the following steps: User enters login credentials; Credentials are validated; If valid, the user is directed to the dashboard; If invalid, an error message is shown, and the user can retry or reset the password."],
-                ["Write a Python function to calculate the Fibonacci sequence up to n numbers. Then write test cases to verify the function works correctly for edge cases like negative numbers, zero, and large inputs."],
-                ["Build an HTML page for a Kanban board with three columns with Vue.js: To Do, In Progress, and Done. Each column should allow adding, moving, and deleting tasks. Implement drag-and-drop functionality using Vue Draggable and persist the state using Vuex."],
-                ["Develop a Streamlit app that takes a CSV file as input and provides: 1) Basic statistics about the data 2) Interactive visualizations using Plotly 3) A data cleaning interface with options to handle missing values 4) An option to download the cleaned data."],
-                ["Write an HTML page with embedded JavaScript that creates an interactive periodic table. Each element should display its properties on hover and allow filtering by category (metals, non-metals, etc.). Include a search bar to find elements by name or symbol."],
-                ["Here's a Python function that sorts a list of dictionaries by a specified key:\n\n```python\ndef sort_dicts(data, key):\n    return sorted(data, key=lambda x: x[key])\n```\n\nWrite test cases to verify the function works correctly for edge cases like empty lists, missing keys, and different data types. If you use unittest, please use `unittest.main(argv=['first-arg-is-ignored'], exit=False)` to run the tests."],
-                ["Create a React component for a fitness tracker that shows: 1) Daily step count 2) Calories burned 3) Distance walked 4) A progress bar for daily goals."],
-                ["Build a Vue.js dashboard for monitoring server health. Include: 1) Real-time CPU and memory usage graphs 2) Disk space visualization 3) Network activity monitor 4) Alerts for critical thresholds."],
-                ["Write a C program that calculates and prints the first 100 prime numbers in a formatted table with 10 numbers per row. Include a function to check if a number is prime and use it in your solution."],
-                ["Write a C++ program that implements a simple calculator using object-oriented programming. Create a Calculator class with methods for addition, subtraction, multiplication, and division. Include error handling for division by zero."],
-                ["Write a Rust program that generates and prints a Pascal's Triangle with 10 rows. Format the output to center-align the numbers in each row."],
-                ["Write a Java program that simulates a simple bank account system. Create a BankAccount class with methods for deposit, withdrawal, and balance inquiry. Include error handling for insufficient funds and demonstrate its usage with a few transactions."],
-                ["Write a Go program that calculates and prints the Fibonacci sequence up to the 50th number. Format the output in a table with 5 numbers per row and include the index of each Fibonacci number."],
-                ["Write a C program that calculates and prints a histogram of letter frequencies from a predefined string. Use ASCII art to display the histogram vertically."],
-                ["Write a C++ program that implements a simple stack data structure with push, pop, and peek operations. Demonstrate its usage by reversing a predefined string using the stack."],
-                ["Write a Rust program that calculates and prints the first 20 happy numbers. Include a function to check if a number is happy and use it in your solution."],
-                ["Write a Java program that implements a simple binary search algorithm. Create a sorted array of integers and demonstrate searching for different values, including cases where the value is found and not found."],
-                ["Write a Go program that generates and prints a multiplication table from 1 to 12. Format the output in a neat grid with proper alignment."],
+                vote_section,  # Hide vote section
+                vote_buttons_row,  # Hide vote buttons
+                vote_status,  # Clear vote status
             ],
-            example_labels=[
-                "🏮 春节主题图案",
-                "🎎 日本の伝統的な和柄パターン",
-                "🌐 Particles in a Spherical Container",
-                "💹 NVIDIA Stock Analysis with Matplotlib",
-                "🧮 Calculator with Gradio",
-                "📝 Todo List App with React.js",
-                "📂 File Upload Web App with Streamlit",
-                "💦 Solve Trapping Rain Water Problem",
-                "🎮 Pygame Bouncing Ball Game",
-                "💳 Financial Dashboard with Vue.js",
-                "🔑 User Login Process Flowchart",
-                "🔢 Fibonacci Sequence with Tests",
-                "📌 Vue Kanban Board",
-                "🧹 Streamlit Data Cleaning App",
-                "⚗️ Interactive Periodic Table with React",
-                "📚 Dictionary Sorting Tests in Python",
-                "🏋️‍♂️ Fitness Tracker with React",
-                "🖥️ Vue Server Monitoring",
-                "🔢 Prime Numbers in C",
-                "🧮 OOP Calculator in C++",
-                "🔷 Pascal's Triangle in Rust",
-                "🏛️ Bank Account Simulation in Java",
-                "🐰 Fibonacci Sequence in Go",
-                "📊 Letter Frequency Histogram in C",
-                "📦 Stack Implementation in C++",
-                "😄 Happy Numbers in Rust",
-                "🔎 Binary Search in Java",
-                "✖️ Multiplication Table in Go",
-            ],
-            examples_per_page=100,
-            label="Example Prompts",
-            inputs=[text_input],
         )
-        
+
+        # Vote button handlers
+        def vote_and_clear(state0, state1, vote_type):
+            message, ranking_update, last_update = handle_vote(
+                state0, state1, vote_type
+            )
+            if "successfully" in message:
+                # Clear everything after successful vote
+                model_a, model_b = get_random_models()
+                return (
+                    message,  # vote status
+                    None,
+                    None,  # Clear states
+                    "",
+                    "",  # Clear chats
+                    "",
+                    "",  # Clear responses
+                    "",
+                    "",  # Clear codes
+                    "",
+                    "",  # Clear sandbox views
+                    gr.update(visible=False),
+                    gr.update(visible=False),  # Hide sandbox components
+                    "**Conversation:** 0 turns | **Total Messages:** 0",  # Reset stats A
+                    "**Conversation:** 0 turns | **Total Messages:** 0",  # Reset stats B
+                    f"**Model A:** {model_a}",
+                    f"**Model B:** {model_b}",  # New models
+                    gr.update(visible=False),
+                    gr.update(visible=False),  # Hide vote UI
+                    None,
+                    None,  # Reset state vars
+                    ranking_update,  # Update ranking table
+                    last_update,  # Update last updated time
+                )
+            else:
+                return (
+                    message,  # vote status
+                    state0,
+                    state1,  # Keep states
+                    gr.update(),
+                    gr.update(),  # Keep chats
+                    gr.update(),
+                    gr.update(),  # Keep responses
+                    gr.update(),
+                    gr.update(),  # Keep codes
+                    gr.update(),
+                    gr.update(),  # Keep sandbox views
+                    gr.update(),
+                    gr.update(),  # Keep sandbox components
+                    gr.update(),
+                    gr.update(),  # Keep stats
+                    gr.update(),
+                    gr.update(),  # Keep model displays
+                    gr.update(),
+                    gr.update(),  # Keep vote UI
+                    state0,
+                    state1,  # Keep state vars
+                    gr.update(),  # Keep ranking table
+                    gr.update(),  # Keep last updated time
+                )
+
+        # Vote button click handlers
+        for vote_btn, vote_type in [
+            (vote_left_btn, "left"),
+            (vote_right_btn, "right"),
+            (vote_tie_btn, "tie"),
+            (vote_both_bad_btn, "both_bad"),
+        ]:
+            vote_btn.click(
+                fn=vote_and_clear,
+                inputs=[state0_var, state1_var, gr.State(vote_type)],
+                outputs=[
+                    vote_status,
+                    state0_var,
+                    state1_var,
+                    chatbot_a,
+                    chatbot_b,
+                    response_a,
+                    response_b,
+                    code_a,
+                    code_b,
+                    sandbox_view_a,
+                    sandbox_view_b,
+                    sandbox_component_a,
+                    sandbox_component_b,
+                    chat_stats_a,
+                    chat_stats_b,
+                    model_display_a,
+                    model_display_b,
+                    vote_section,
+                    vote_buttons_row,
+                    state0_var,
+                    state1_var,
+                    ranking_table,  # Update ranking table
+                    ranking_last_update,  # Update last updated time
+                ],
+            )
+
+        # Ranking handlers
+        def update_ranking_display():
+            df = load_ranking_data()
+            if df.empty:
+                return gr.update(value=df), "**Last Updated:** No data available"
+
+            last_update = (
+                ranking_last_updated.strftime("%Y-%m-%d %H:%M:%S")
+                if ranking_last_updated
+                else "Unknown"
+            )
+            return gr.update(value=df), f"**Last Updated:** {last_update}"
+
+        refresh_ranking_btn.click(
+            fn=update_ranking_display,
+            inputs=[],
+            outputs=[ranking_table, ranking_last_update],
+        )
+
+        # Auto-load ranking on startup
+        demo.load(
+            fn=update_ranking_display,
+            inputs=[],
+            outputs=[ranking_table, ranking_last_update],
+        )
+        # Start auto-refresh for ranking
+        auto_refresh_ranking()
+
     return demo
 
 def main():
