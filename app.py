@@ -7,10 +7,8 @@ import gradio as gr
 from gradio_sandboxcomponent import SandboxComponent
 import pandas as pd
 import datetime
-import time
 import os
 from datasets import Dataset, load_dataset
-import threading
 
 # Import completion utilities
 from completion import make_config, registered_api_completion
@@ -427,8 +425,8 @@ def handle_vote(state0, state1, vote_type):
     )
 
     if success:
-        # Refresh ranking data and get updated table
-        df = load_ranking_data()
+        # Refresh ranking data and get updated table (force reload after vote)
+        df = load_ranking_data(force_reload=True)
         last_update = (
             ranking_last_updated.strftime("%Y-%m-%d %H:%M:%S")
             if ranking_last_updated
@@ -576,7 +574,7 @@ def save_vote_to_hf(
         return False, f"Error saving vote: {str(e)}"
 
 
-def load_ranking_data(hf_token=None):
+def load_ranking_data(hf_token=None, force_reload=False):
     """Load and calculate ranking data from HuggingFace dataset"""
     global ranking_data, ranking_last_updated
 
@@ -586,8 +584,17 @@ def load_ranking_data(hf_token=None):
         if not token:
             return pd.DataFrame()
 
-        # Load dataset
-        dataset = load_dataset(HF_DATASET_NAME, split="train", token=token)
+        # Load dataset - force download if requested
+        if force_reload:
+            # Force download from remote, ignore cache
+            dataset = load_dataset(
+                HF_DATASET_NAME,
+                split="train",
+                token=token,
+                download_mode="force_redownload",
+            )
+        else:
+            dataset = load_dataset(HF_DATASET_NAME, split="train", token=token)
         # Convert to pandas DataFrame - handle both Dataset and DatasetDict
         if hasattr(dataset, "to_pandas"):
             df = dataset.to_pandas()
@@ -661,18 +668,6 @@ def load_ranking_data(hf_token=None):
     except Exception as e:
         print(f"Error loading ranking data: {e}")
         return pd.DataFrame()
-
-
-def auto_refresh_ranking():
-    """Auto refresh ranking data every 5 minutes"""
-
-    def refresh_loop():
-        while True:
-            time.sleep(300)  # 5 minutes
-            load_ranking_data()
-
-    thread = threading.Thread(target=refresh_loop, daemon=True)
-    thread.start()
 
 
 def build_ui():
@@ -950,9 +945,7 @@ def build_ui():
             # Ranking Tab
             with gr.Tab("📊 Ranking", id="ranking"):
                 gr.Markdown("## 🏆 Model Leaderboard")
-                refresh_ranking_btn = gr.Button(
-                    "🔄 Refresh Ranking", variant="secondary"
-                )
+                gr.Markdown("*Rankings auto-refresh every 10 seconds*")
 
                 ranking_table = gr.Dataframe(
                     headers=[
@@ -979,6 +972,9 @@ def build_ui():
                 )
 
                 ranking_last_update = gr.Markdown("**Last Updated:** Not loaded yet")
+
+                # Timer for auto-refresh every 5 minutes
+                ranking_timer = gr.Timer(value=300.0, active=True)
 
         # Event handlers
         # Create state variables for the run buttons
@@ -1288,8 +1284,24 @@ def build_ui():
             )
             return gr.update(value=df), f"**Last Updated:** {last_update}"
 
-        refresh_ranking_btn.click(
-            fn=update_ranking_display,
+        def force_update_ranking_display():
+            """Force update ranking data from HuggingFace (for timer)"""
+            print("🔄 Force refreshing ranking data from HuggingFace...")
+            df = load_ranking_data(force_reload=True)
+            if df.empty:
+                return gr.update(value=df), "**Last Updated:** No data available"
+
+            last_update = (
+                ranking_last_updated.strftime("%Y-%m-%d %H:%M:%S")
+                if ranking_last_updated
+                else "Unknown"
+            )
+            print(f"✅ Ranking data refreshed at {last_update}")
+            return gr.update(value=df), f"**Last Updated:** {last_update}"
+
+        # Timer tick handler for auto-refresh with force reload
+        ranking_timer.tick(
+            fn=force_update_ranking_display,
             inputs=[],
             outputs=[ranking_table, ranking_last_update],
         )
@@ -1300,8 +1312,6 @@ def build_ui():
             inputs=[],
             outputs=[ranking_table, ranking_last_update],
         )
-        # Start auto-refresh for ranking
-        auto_refresh_ranking()
 
     return demo
 
