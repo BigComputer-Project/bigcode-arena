@@ -60,7 +60,6 @@ def load_model_answers(answer_dir: str):
         if not os.path.isdir(os.path.join(answer_dir, folder)):
             continue
         if not os.path.exists(os.path.join(answer_dir, folder, "generation.jsonl")):
-            print(f"WARNING: {folder} does not have generation.jsonl, skip it.")
             continue
         filenames.append(os.path.join(answer_dir, folder, "generation.jsonl"))
 
@@ -111,7 +110,6 @@ def load_model_answers_and_execution_results(data_dir: str):
         if not os.path.isdir(os.path.join(data_dir, folder)):
             continue
         if not os.path.exists(os.path.join(data_dir, folder, "execution_results.jsonl")):
-            print(f"WARNING: {folder} does not have execution_results.jsonl, skip it.")
             continue
         filenames.append(os.path.join(data_dir, folder, "execution_results.jsonl"))
 
@@ -205,41 +203,10 @@ def chat_completion_openai(model, messages, temperature, max_tokens, api_dict=No
             }
             break
         except openai.RateLimitError as e:
-            print(type(e), e)
             time.sleep(API_RETRY_SLEEP)
         except openai.BadRequestError as e:
-            print("=== DEBUG: OpenAI BadRequestError ===")
-            print("Error type:", type(e))
-            print("Error message:", str(e))
-            print("=== Analyzing messages for image issues ===")
-            for i, msg in enumerate(messages):
-                print(f"Message {i} role: {msg.get('role', 'unknown')}")
-                if "content" in msg:
-                    content = msg["content"]
-                    if isinstance(content, list):
-                        for j, item in enumerate(content):
-                            if isinstance(item, dict) and item.get("type") == "image_url":
-                                url = item.get("image_url", {}).get("url", "")
-                                if url.startswith("data:image/png;base64,"):
-                                    base64_part = url[22:]  # Remove "data:image/png;base64," prefix
-                                    print(f"  Image {j}: base64 length = {len(base64_part)}")
-                                    if len(base64_part) < 50:
-                                        print(f"  *** ISSUE: Image {j} has very short/empty base64: '{url}'")
-                                elif url.startswith("data:image/"):
-                                    print(f"  Image {j}: Non-PNG data URL: {url[:50]}...")
-                                else:
-                                    print(f"  Image {j}: Unexpected URL format: {url[:50]}...")
-                            elif isinstance(item, dict) and item.get("type") == "text":
-                                text_content = item.get("text", "")
-                                print(f"  Text {j}: {len(text_content)} chars")
-                            else:
-                                print(f"  Content {j}: {type(item)} - {str(item)[:50]}...")
-                    else:
-                        print(f"  Content: {type(content)} - {str(content)[:100]}...")
-            print("=== End debug info ===")
             break
         except KeyError:
-            print(type(e), e)
             break
     
     return output
@@ -304,41 +271,10 @@ def chat_completion_openai_thinking(model, messages, api_dict=None, **kwargs):
             }
             break
         except openai.RateLimitError as e:
-            print(type(e), e)
             time.sleep(API_RETRY_SLEEP)
         except openai.BadRequestError as e:
-            print("=== DEBUG: OpenAI BadRequestError ===")
-            print("Error type:", type(e))
-            print("Error message:", str(e))
-            print("=== Analyzing messages for image issues ===")
-            for i, msg in enumerate(messages):
-                print(f"Message {i} role: {msg.get('role', 'unknown')}")
-                if "content" in msg:
-                    content = msg["content"]
-                    if isinstance(content, list):
-                        for j, item in enumerate(content):
-                            if isinstance(item, dict) and item.get("type") == "image_url":
-                                url = item.get("image_url", {}).get("url", "")
-                                if url.startswith("data:image/png;base64,"):
-                                    base64_part = url[22:]  # Remove "data:image/png;base64," prefix
-                                    print(f"  Image {j}: base64 length = {len(base64_part)}")
-                                    if len(base64_part) < 50:
-                                        print(f"  *** ISSUE: Image {j} has very short/empty base64: '{url}'")
-                                elif url.startswith("data:image/"):
-                                    print(f"  Image {j}: Non-PNG data URL: {url[:50]}...")
-                                else:
-                                    print(f"  Image {j}: Unexpected URL format: {url[:50]}...")
-                            elif isinstance(item, dict) and item.get("type") == "text":
-                                text_content = item.get("text", "")
-                                print(f"  Text {j}: {len(text_content)} chars")
-                            else:
-                                print(f"  Content {j}: {type(item)} - {str(item)[:50]}...")
-                    else:
-                        print(f"  Content: {type(content)} - {str(content)[:100]}...")
-            print("=== End debug info ===")
             break
         except KeyError:
-            print(type(e), e)
             break
     
     return output
@@ -382,7 +318,6 @@ def chat_completion_deepseek_reasoner(messages, api_dict, **kwargs):
             }
             break
         except Exception as e:
-            print(type(e), e)
             time.sleep(API_RETRY_SLEEP)
             
     return output
@@ -426,7 +361,6 @@ def chat_completion_deepseek(messages, max_tokens, api_dict, **kwargs):
             }
             break
         except Exception as e:
-            print(type(e), e)
             time.sleep(API_RETRY_SLEEP)
             
     return output
@@ -463,7 +397,6 @@ def chat_completion_anthropic(model, messages, temperature, max_tokens, api_dict
             }
             break
         except anthropic.APIError as e:
-            print(type(e), e)
             time.sleep(API_RETRY_SLEEP)
     return output
 
@@ -494,7 +427,6 @@ def chat_completion_anthropic_thinking(model, messages, max_tokens, budget_token
             }
             break
         except anthropic.APIError as e:
-            print(type(e), e)
             time.sleep(API_RETRY_SLEEP)
 
     return output
@@ -525,7 +457,6 @@ def chat_completion_mistral(model, messages, temperature, max_tokens, **kwargs):
             }
             break
         except MistralException as e:
-            print(type(e), e)
             break
 
     return output
@@ -558,7 +489,6 @@ def chat_completion_xai(model, messages, temperature, max_tokens, api_dict=None,
             }
             break
         except Exception as e:
-            print(type(e), e)
             time.sleep(API_RETRY_SLEEP)
     
     return output
@@ -582,7 +512,6 @@ def chat_completion_litellm(model, messages, temperature, max_tokens, api_dict=N
             }
             break
         except Exception as e:
-            print(type(e), e)
             time.sleep(API_RETRY_SLEEP)
     
     return output
@@ -729,7 +658,6 @@ def http_completion_gemini(model, messages, **kwargs):
                 "answer": response.json()["candidates"][0]["content"]["parts"][0]["text"],
             }
         except KeyError as e:
-            print(type(e), e)
             print(response.json())
     return output
     
@@ -839,10 +767,8 @@ def chat_completion_cohere(model, messages, temperature, max_tokens, **kwargs):
             }
             break
         except cohere.core.api_error.ApiError as e:
-            print(type(e), e)
             raise
         except Exception as e:
-            print(type(e), e)
             break
     
     return output
@@ -987,7 +913,9 @@ def download_model(model: str, max_workers: int = 64):
     
     try:
         subprocess.run(cmd, env=env, check=True)
+        print(f"Successfully downloaded model '{model}' with {max_workers} max workers.")
     except subprocess.CalledProcessError as e:
+        print(f"Error occurred while downloading the model: {e}")
 
 
 @register_engine("sglang")
@@ -1035,6 +963,7 @@ def sglang_completion(
         **server_args,
     )
     
+    print(f"DEBUG: sglang_completion: model: {model}")
     
     uid_to_response = batch_submit_sglang(
         executor=executor, 
@@ -1046,11 +975,13 @@ def sglang_completion(
     )
     
     executor.join()
+    print("DEBUG: sglang_completion: done, sleep 10 seconds...")
     time.sleep(10)
         
     num_null = sum(
         [uid_to_response[uid]['answer'] is None for uid in uids if uid in uid_to_response]
     )
+    print(f"Number of null responses: {num_null}")
     
     records = []
     for i, context in enumerate(processed_context):
@@ -1151,7 +1082,6 @@ def chat_completion_aws_bedrock_claude(messages, api_dict=None, aws_region="us-w
             break
             
         except Exception as e:
-            print(type(e), e)
             time.sleep(API_RETRY_SLEEP)
             
     return output
@@ -1225,7 +1155,6 @@ def chat_completion_aws_bedrock_mistral(messages, api_dict=None, aws_region="us-
             break
             
         except Exception as e:
-            print(type(e), e)
             time.sleep(API_RETRY_SLEEP)
             
     return output
@@ -1258,6 +1187,7 @@ def chat_completion_mistral_streaming(model, messages, temperature, max_tokens, 
                 yield chunk.choices[0].delta.content
                 
     except Exception as e:
+        print(f"Error in Mistral streaming completion: {e}")
         yield f"Error: {str(e)}"
 
 
@@ -1294,4 +1224,5 @@ def chat_completion_gemini_streaming(model, messages, **kwargs):
                 yield chunk.text
                 
     except Exception as e:
+        print(f"Error in Gemini streaming completion: {e}")
         yield f"Error: {str(e)}"

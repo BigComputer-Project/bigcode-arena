@@ -364,9 +364,9 @@ def add_text_and_generate(state0, state1, text, temperature, max_tokens, model_a
 
                 # Update sandbox view with output and errors
                 if sandbox_output0:
-                    sandbox_view_a += f"# Output\n{sandbox_output0}"
+                    sandbox_view_a += sandbox_output0
                 if sandbox_error0:
-                    sandbox_view_a = f"<details open><summary><strong>🚨 Errors</strong></summary>\n\n```\n{sandbox_error0}\n```\n\n</details>\n\n" + sandbox_view_a
+                    sandbox_view_a = f"<details closed><summary><strong>🚨 Errors</strong></summary>\n\n```\n{sandbox_error0}\n```\n\n</details>\n\n" + sandbox_view_a
 
             # Process results for model B
             if code1.strip():
@@ -383,9 +383,9 @@ def add_text_and_generate(state0, state1, text, temperature, max_tokens, model_a
                     )
 
                 if sandbox_output1:
-                    sandbox_view_b += f"## Output\n{sandbox_output1}"
+                    sandbox_view_b += sandbox_output1
                 if sandbox_error1:
-                    sandbox_view_b = f"<details open><summary><strong>🚨 Errors</strong></summary>\n\n```\n{sandbox_error1}\n```\n\n</details>\n\n" + sandbox_view_b
+                    sandbox_view_b = f"<details closed><summary><strong>🚨 Errors</strong></summary>\n\n```\n{sandbox_error1}\n```\n\n</details>\n\n" + sandbox_view_b
                     
         except Exception as e:
             # Fallback to sequential processing
@@ -399,9 +399,9 @@ def add_text_and_generate(state0, state1, text, temperature, max_tokens, model_a
                         key=f"sandbox_a_fallback_{int(time.time() * 1000)}"
                     )
                 if sandbox_output0:
-                    sandbox_view_a += f"# Output\n{sandbox_output0}"
+                    sandbox_view_a += sandbox_output0
                 if sandbox_error0:
-                    sandbox_view_a = f"<details open><summary><strong>🚨 Errors</strong></summary>\n\n```\n{sandbox_error0}\n```\n\n</details>\n\n" + sandbox_view_a
+                    sandbox_view_a = f"<details closed><summary><strong>🚨 Errors</strong></summary>\n\n```\n{sandbox_error0}\n```\n\n</details>\n\n" + sandbox_view_a
             
             if code1.strip():
                 install_command1 = sandbox_state1.get('install_command', "")
@@ -415,7 +415,7 @@ def add_text_and_generate(state0, state1, text, temperature, max_tokens, model_a
                 if sandbox_output1:
                     sandbox_view_b += f"## Output\n{sandbox_output1}"
                 if sandbox_error1:
-                    sandbox_view_b = f"<details open><summary><strong>🚨 Errors</strong></summary>\n\n```\n{sandbox_error1}\n```\n\n</details>\n\n" + sandbox_view_b
+                    sandbox_view_b = f"<details closed><summary><strong>🚨 Errors</strong></summary>\n\n```\n{sandbox_error1}\n```\n\n</details>\n\n" + sandbox_view_b
             
             sandbox_time = time.time() - sandbox_start_time
         finally:
@@ -840,7 +840,7 @@ def handle_vote(state0, state1, vote_type):
             success, message = save_vote_to_hf(
                 state0["model_name"],
                 state1["model_name"],
-                user_messages,
+                user_messages[0],
                 response_a,
                 response_b,
                 vote_type,
@@ -849,13 +849,12 @@ def handle_vote(state0, state1, vote_type):
                 conversation_a,
                 conversation_b,
             )
-            if success:
-  # Upload successful
-            else:
-  # Upload failed
+
         except Exception as e:
-  # Upload error
+            print(f"Error saving vote: {str(e)}")
+            pass
     
+    print("Saving vote in background...")
     # Start background upload thread
     upload_thread = threading.Thread(target=save_vote_background)
     upload_thread.daemon = True
@@ -1029,7 +1028,7 @@ def serialize_interactions(interactions):
 
 
 def save_vote_to_hf(
-    model_a, model_b, user_messages, response_a, response_b, vote_result, interactions_a=None, interactions_b=None, conversation_a=None, conversation_b=None, hf_token=None
+    model_a, model_b, prompt, response_a, response_b, vote_result, interactions_a=None, interactions_b=None, conversation_a=None, conversation_b=None, hf_token=None
 ):
     """Save vote result to HuggingFace dataset with full conversation history"""
     try:
@@ -1072,7 +1071,7 @@ def save_vote_to_hf(
             "timestamp": datetime.datetime.now().isoformat(),
             "model_a": model_a,
             "model_b": model_b,
-            "prompt": user_messages,  # List of all user messages from the conversation
+            "initial_prompt": prompt,  # Convert list to single string
             "action_a": serialized_action_a,  # Actions organized by turns for model A
             "action_b": serialized_action_b,  # Actions organized by turns for model B
             "conversation_a": serialized_conversation_a,  # Full conversation history for model A
@@ -2163,11 +2162,9 @@ def build_ui():
 
 def main():
     """Main function to run the Simple BigCodeArena app"""
-    if available_models:
-        # Get random models for this session
-        model_a, model_b = get_random_models()
-    else:
-    
+    # Get random models for this session
+    model_a, model_b = get_random_models()
+
     # Build the UI
     demo = build_ui()
     
