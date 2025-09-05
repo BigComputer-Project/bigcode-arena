@@ -205,8 +205,8 @@ def log_sandbox_telemetry_gradio_fn(
         default=str,
         ensure_ascii=False
     )
-    filename = get_sandbox_log_filename(sandbox_state)
-    upsert_sandbox_log(filename=filename, data=log_data)
+    # filename = get_sandbox_log_filename(sandbox_state)
+    # upsert_sandbox_log(filename=filename, data=log_data)
 
     # # Upload to Azure Blob Storage
     # if AZURE_BLOB_STORAGE_CONNECTION_STRING:

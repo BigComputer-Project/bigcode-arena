@@ -8,7 +8,7 @@ from typing import Any, Generator, Literal, TypeAlias, TypedDict, Set
 import uuid
 import time
 import gradio as gr
-
+import re
 import base64
 from e2b_code_interpreter import Sandbox as CodeSandbox
 from gradio_sandboxcomponent import SandboxComponent
@@ -383,7 +383,6 @@ def run_code_interpreter(code: str, code_language: str | None, install_command: 
 
     # Run install command if provided
     if install_command.strip():
-        print(f"Running install command: {install_command}")
         is_success, stdout, stderr = run_command_in_sandbox(
             sandbox=sandbox,
             command=install_command,
@@ -445,16 +444,19 @@ def run_html_sandbox(code: str, install_command: str, existing_sandbox_id: str |
     sandbox.files.make_dir(project_root)
 
     # Run install command if provided
+    stderrs = []
     if install_command.strip():
-        print(f"Running install command: {install_command}")
         is_success, stdout, stderr = run_command_in_sandbox(
             sandbox=sandbox,
             command=install_command,
             timeout=60 * 3,
         )
+        if stderr:
+            stderrs.extend(stderr)
         if not is_success:
             print(f"Install command failed: {stderr}")
-            return "", sandbox.sandbox_id, '\n'.join(stderr)
+            # Don't return early - continue with HTML setup
+            stderrs.append(f"Install command failed: {' '.join(stderr)}")
 
     # replace placeholder URLs with SVG data URLs
     code = replace_placeholder_urls(code)
@@ -463,7 +465,7 @@ def run_html_sandbox(code: str, install_command: str, existing_sandbox_id: str |
     sandbox.files.write(file_path, code, "user", 60)
 
     sandbox_url = get_sandbox_app_url(sandbox, 'html')
-    return (sandbox_url, sandbox.sandbox_id, '')
+    return (sandbox_url, sandbox.sandbox_id, '\n'.join(stderrs))
 
 
 def run_react_sandbox(code: str, install_command: str, existing_sandbox_id: str | None = None) -> CodeRunResult:
@@ -493,7 +495,6 @@ def run_react_sandbox(code: str, install_command: str, existing_sandbox_id: str 
 
     # Run install command AFTER setting up the project structure
     if install_command.strip():
-        print(f"Running install command: {install_command}")
         is_success, stdout, stderr = run_command_in_sandbox(
             sandbox=sandbox,
             command=install_command,
@@ -555,7 +556,6 @@ def run_vue_sandbox(code: str, install_command: str, existing_sandbox_id: str | 
 
     # Run install command AFTER setting up the project structure
     if install_command.strip():
-        print(f"Running install command: {install_command}")
         is_success, stdout, stderr = run_command_in_sandbox(
             sandbox=sandbox,
             command=install_command,
@@ -615,7 +615,6 @@ def run_pygame_sandbox(code: str, install_command: str, existing_sandbox_id: str
 
     # Run install command AFTER setting up the project structure
     if install_command.strip():
-        print(f"Running install command: {install_command}")
         is_success, stdout, stderr = run_command_in_sandbox(
             sandbox=sandbox,
             command=install_command,
@@ -666,13 +665,36 @@ def run_gradio_sandbox(code: str, install_command: str, existing_sandbox_id: str
     sandbox = reuse_or_create_sandbox(sandbox_id=existing_sandbox_id)
 
     file_path = "~/gradio_app/main.py"
+
+    # Remove server_port and server_name arguments from demo.launch() calls
+    code = re.sub(r'\.launch\([^)]*server_port\s*=\s*[^,)]+[,\s]*', '.launch(', code)
+    code = re.sub(r'\.launch\([^)]*server_name\s*=\s*[^,)]+[,\s]*', '.launch(', code)
+    
+    # Ensure demo.launch() uses the correct server configuration
+    if 'demo.launch(' in code:
+        # Replace demo.launch() with proper configuration
+        code = re.sub(
+            r'demo\.launch\([^)]*\)',
+            f'demo.launch(server_name="0.0.0.0", server_port=7860, share=False)',
+            code
+        )
+    elif '.launch(' in code:
+        # Handle other patterns like app.launch(), interface.launch(), etc.
+        code = re.sub(
+            r'(\w+)\.launch\([^)]*\)',
+            rf'\1.launch(server_name="0.0.0.0", server_port=7860, share=False)',
+            code
+        )
+    else:
+        # If no launch() call found, add one at the end
+        code += f'\n\n# Auto-added launch configuration\nif __name__ == "__main__":\n    demo.launch(server_name="0.0.0.0", server_port=7860, share=False)'
+
     sandbox.files.write(file_path, code, "user", 60)
 
     stderrs = []
 
     # Run install command if provided
     if install_command.strip():
-        print(f"Running install command: {install_command}")
         is_success, stdout, stderr = run_command_in_sandbox(
             sandbox=sandbox,
             command=install_command,
@@ -682,12 +704,12 @@ def run_gradio_sandbox(code: str, install_command: str, existing_sandbox_id: str
             stderrs.extend(stderr)
         if not is_success:
             print(f"Install command failed: {stderr}")
-            return "", sandbox.sandbox_id, '\n'.join(stderr)
-    
+            # Don't return early - continue with Gradio setup
+            stderrs.append(f"Install command failed: {' '.join(stderr)}")
     stderr = run_background_command_with_timeout(
         sandbox,
         f"python {file_path}",
-        timeout=10,
+        timeout=15,
     )
     stderrs.append(stderr)
 
@@ -707,7 +729,6 @@ def run_streamlit_sandbox(code: str, install_command: str, existing_sandbox_id: 
 
     # Run install command if provided
     if install_command.strip():
-        print(f"Running install command: {install_command}")
         is_success, stdout, stderr = run_command_in_sandbox(
             sandbox=sandbox,
             command=install_command,
@@ -717,12 +738,13 @@ def run_streamlit_sandbox(code: str, install_command: str, existing_sandbox_id: 
             stderrs.extend(stderr)
         if not is_success:
             print(f"Install command failed: {stderr}")
-            return "", sandbox.sandbox_id, '\n'.join(stderr)
+            # Don't return early - continue with Streamlit setup
+            stderrs.append(f"Install command failed: {' '.join(stderr)}")
 
     stderr = run_background_command_with_timeout(
         sandbox,
         r"sudo kill -9 $(ss -lptn 'sport = :8501' | grep -oP '(?<=pid=)\d+'); streamlit run ~/mystreamlit/app.py --server.port 8501 --server.headless true",
-        timeout=8,
+        timeout=15,
     )
     stderrs.append(stderr)
 

@@ -237,7 +237,7 @@ def extract_and_execute_code(message, sandbox_state):
         return sandbox_state, "", ""
     
     code, code_language, env_selection, install_command = extract_result
-    
+
     # Update sandbox state (now a dictionary)
     sandbox_state['code_to_execute'] = code
     sandbox_state['install_command'] = install_command
@@ -366,7 +366,7 @@ def add_text_and_generate(state0, state1, text, temperature, max_tokens, model_a
                 if sandbox_output0:
                     sandbox_view_a += sandbox_output0
                 if sandbox_error0:
-                    sandbox_view_a = f"<details closed><summary><strong>🚨 Errors</strong></summary>\n\n```\n{sandbox_error0}\n```\n\n</details>\n\n" + sandbox_view_a
+                    sandbox_view_a = f"<details closed><summary><strong>🚨 Errors/Warnings</strong></summary>\n\n```\n{sandbox_error0}\n```\n\n</details>\n\n" + sandbox_view_a
 
             # Process results for model B
             if code1.strip():
@@ -385,7 +385,7 @@ def add_text_and_generate(state0, state1, text, temperature, max_tokens, model_a
                 if sandbox_output1:
                     sandbox_view_b += sandbox_output1
                 if sandbox_error1:
-                    sandbox_view_b = f"<details closed><summary><strong>🚨 Errors</strong></summary>\n\n```\n{sandbox_error1}\n```\n\n</details>\n\n" + sandbox_view_b
+                    sandbox_view_b = f"<details closed><summary><strong>🚨 Errors/Warnings</strong></summary>\n\n```\n{sandbox_error1}\n```\n\n</details>\n\n" + sandbox_view_b
                     
         except Exception as e:
             # Fallback to sequential processing
@@ -401,7 +401,7 @@ def add_text_and_generate(state0, state1, text, temperature, max_tokens, model_a
                 if sandbox_output0:
                     sandbox_view_a += sandbox_output0
                 if sandbox_error0:
-                    sandbox_view_a = f"<details closed><summary><strong>🚨 Errors</strong></summary>\n\n```\n{sandbox_error0}\n```\n\n</details>\n\n" + sandbox_view_a
+                    sandbox_view_a = f"<details closed><summary><strong>🚨 Errors/Warnings</strong></summary>\n\n```\n{sandbox_error0}\n```\n\n</details>\n\n" + sandbox_view_a
             
             if code1.strip():
                 install_command1 = sandbox_state1.get('install_command', "")
@@ -415,7 +415,7 @@ def add_text_and_generate(state0, state1, text, temperature, max_tokens, model_a
                 if sandbox_output1:
                     sandbox_view_b += f"## Output\n{sandbox_output1}"
                 if sandbox_error1:
-                    sandbox_view_b = f"<details closed><summary><strong>🚨 Errors</strong></summary>\n\n```\n{sandbox_error1}\n```\n\n</details>\n\n" + sandbox_view_b
+                    sandbox_view_b = f"<details closed><summary><strong>🚨 Errors/Warnings</strong></summary>\n\n```\n{sandbox_error1}\n```\n\n</details>\n\n" + sandbox_view_b
             
             sandbox_time = time.time() - sandbox_start_time
         finally:
@@ -592,7 +592,7 @@ def retry_last_message(state0, state1, model_a, model_b):
         result[19] if len(result) > 19 else "",  # sandbox_view_b
         new_state0,  # state0_var
         new_state1,  # state1_var
-        "",  # Clear text input
+        last_user_message,  # Keep original text input
         f"**Model A:** {model_a}",  # Update model display A
         f"**Model B:** {model_b}",  # Update model display B
         gr.update(visible=show_vote_buttons),  # vote_section
@@ -652,7 +652,7 @@ def send_to_left_only(state0, state1, text, temperature, max_tokens, model_a, mo
         if sandbox_output0:
             sandbox_view_a += f"# Output\n{sandbox_output0}"
         if sandbox_error0:
-            sandbox_view_a = f"<details closed><summary><strong>🚨 Errors</strong></summary>\n\n```\n{sandbox_error0.strip()}\n```\n\n</details>\n\n" + sandbox_view_a
+            sandbox_view_a = f"<details closed><summary><strong>🚨 Errors/Warnings</strong></summary>\n\n```\n{sandbox_error0.strip()}\n```\n\n</details>\n\n" + sandbox_view_a
     
     # Calculate conversation statistics
     turn_count_a = len([msg for msg in state0["messages"] if msg["role"] == "assistant" and msg["content"]])
@@ -685,7 +685,7 @@ def send_to_left_only(state0, state1, text, temperature, max_tokens, model_a, mo
         "",  # sandbox_view_b (empty)
         state0,  # state0_var
         state1,  # state1_var
-        "",  # Clear text input
+        text,  # Keep original text input
         f"**Model A:** {model_a}",  # Update model display A
         f"**Model B:** {model_b}",  # Update model display B
         gr.update(visible=show_vote_buttons),  # vote_section
@@ -745,7 +745,7 @@ def send_to_right_only(state0, state1, text, temperature, max_tokens, model_a, m
         if sandbox_output1:
             sandbox_view_b += f"# Output\n{sandbox_output1}"
         if sandbox_error1:
-            sandbox_view_b = f"<details closed><summary><strong>🚨 Errors</strong></summary>\n\n```\n{sandbox_error1.strip()}\n```\n\n</details>\n\n" + sandbox_view_b
+            sandbox_view_b = f"<details closed><summary><strong>🚨 Errors/Warnings</strong></summary>\n\n```\n{sandbox_error1.strip()}\n```\n\n</details>\n\n" + sandbox_view_b
     
     # Calculate conversation statistics
     turn_count_a = len([msg for msg in state0["messages"] if msg["role"] == "assistant" and msg["content"]]) if state0 else 0
@@ -778,7 +778,7 @@ def send_to_right_only(state0, state1, text, temperature, max_tokens, model_a, m
         sandbox_view_b,  # sandbox_view_b
         state0,  # state0_var
         state1,  # state1_var
-        "",  # Clear text input
+        text,  # Keep original text input
         f"**Model A:** {model_a}",  # Update model display A
         f"**Model B:** {model_b}",  # Update model display B
         gr.update(visible=show_vote_buttons),  # vote_section
@@ -886,7 +886,7 @@ def run_sandbox_code(sandbox_state: dict, code: str, install_command: str) -> tu
 
     # Determine environment
     env = sandbox_state.get('auto_selected_sandbox_environment') or sandbox_state.get('sandbox_environment')
-
+    print(f"DEBUG: env: {env}")
     try:
         if env == SandboxEnvironment.HTML:
             sandbox_url, sandbox_id, stderr = run_html_sandbox(code, install_command, sandbox_state.get('sandbox_id'))
@@ -909,6 +909,7 @@ def run_sandbox_code(sandbox_state: dict, code: str, install_command: str) -> tu
             return result['sandbox_url'], "", result['stderr']
 
         elif env == SandboxEnvironment.GRADIO:
+            print(f"DEBUG: running gradio sandbox")
             sandbox_url, sandbox_id, stderr = run_gradio_sandbox(code, install_command, sandbox_state.get('sandbox_id'))
             sandbox_state['sandbox_id'] = sandbox_id
             return sandbox_url, "", stderr
@@ -926,6 +927,7 @@ def run_sandbox_code(sandbox_state: dict, code: str, install_command: str) -> tu
             return sandbox_url, "", stderr
 
         elif env == SandboxEnvironment.PYTHON_RUNNER:
+            print(f"DEBUG: running python runner")
             output, stderr = run_code_interpreter(code, 'python', install_command)
             return "", output, stderr
 
@@ -1697,7 +1699,7 @@ def build_ui():
                 result[19] if len(result) > 19 else "",  # sandbox_view_b
                 new_state0,  # state0_var
                 new_state1,  # state1_var
-                "",  # Clear text input
+                text,  # Keep original text input
                 f"**Model A:** {model_a}",  # Update model display A
                 f"**Model B:** {model_b}",  # Update model display B
                 gr.update(visible=show_vote_buttons),  # vote_section
@@ -2040,13 +2042,20 @@ def build_ui():
                 state0, state1, vote_type
             )
             
+            # Get the model names from the current session
+            model_a = state0["model_name"] if state0 else "Unknown"
+            model_b = state1["model_name"] if state1 else "Unknown"
+            
             # Always show thank you message and clear everything immediately
             gr.Info("Thank you for your vote! 🎉 Your feedback has been recorded and new models have been selected.", duration=5)
+
+            # revval the model names in the info message
+            gr.Info(f"Now you can see model names! 👀 \nModel A: {model_a}, Model B: {model_b}", duration=15)
             
-            # Get new random models
+            # Get new random models for the next session
             model_a, model_b = get_random_models()
             
-            # Clear everything and start fresh immediately
+            # Clear everything and start fresh immediately, but preserve examples
             return (
                 "Thank you for your vote! 🎉",  # vote status with thank you message
                 None,  # Clear state0
@@ -2075,6 +2084,7 @@ def build_ui():
                 gr.update(interactive=False),  # Disable vote_right_btn
                 gr.update(interactive=False),  # Disable vote_tie_btn
                 gr.update(interactive=False),  # Disable vote_both_bad_btn
+                "",  # Clear text_input to preserve examples
             )
 
         # Vote button click handlers
@@ -2115,6 +2125,7 @@ def build_ui():
                     vote_right_btn,  # vote_right_btn
                     vote_tie_btn,  # vote_tie_btn
                     vote_both_bad_btn,  # vote_both_bad_btn
+                    text_input,  # text_input (to preserve examples)
                 ],
             )
 

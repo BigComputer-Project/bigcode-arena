@@ -75,6 +75,8 @@ def run_command_in_sandbox(
     stderrs: list[str] = []
 
     try:
+        if "uv" in command:
+            command = "uv venv;" + command
         command_result = sandbox.commands.run(
             cmd=command,
             cwd=working_directory,
