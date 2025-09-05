@@ -84,7 +84,7 @@ def extract_python_imports(code: str) -> list[str]:
                         if len(node.args) > 0 and isinstance(node.args[0], ast.Str):
                             packages.add(node.args[0].s.split('.')[0])
         except Exception as e:
-            print(f"Error processing node {type(node)}: {e}")
+            pass
             continue
 
     # Filter out standard library modules using sys.stdlib_module_names
@@ -114,11 +114,11 @@ def extract_js_imports(code: str) -> list[str]:
         try:
             tree = ts_parser.parse(code_bytes)
         except Exception as e:
-            print(f"TypeScript parsing failed: {e}")
+            pass
             try:
                 tree = js_parser.parse(code_bytes)
             except Exception as e:
-                print(f"JavaScript parsing failed: {e}")
+                pass
                 tree = None
 
         if tree is None:
@@ -206,7 +206,7 @@ def extract_js_imports(code: str) -> list[str]:
         return list(packages)
 
     except Exception as e:
-        print(f"Tree-sitter parsing failed: {e}")
+        pass
         # Fallback to basic regex parsing if tree-sitter fails
         packages: Set[str] = set()
 
@@ -240,9 +240,9 @@ def extract_js_imports(code: str) -> list[str]:
         return list(packages)
 
 
-def determine_python_environment(code: str, imports: list[str]) -> SandboxEnvironment | None:
+def determine_python_environment(code: str, install_command: str) -> SandboxEnvironment | None:
     '''
-    Determine Python sandbox environment based on imports and AST analysis.
+    Determine Python sandbox environment based on install command and AST analysis.
     '''
     try:
         tree = ast.parse(code)
@@ -255,34 +255,34 @@ def determine_python_environment(code: str, imports: list[str]) -> SandboxEnviro
     except SyntaxError:
         pass
 
-    # Check imports for framework detection
-    if 'pygame' in imports:
+    # Check install command for framework detection
+    if install_command and 'pygame' in install_command:
         return SandboxEnvironment.PYGAME
-    elif 'gradio' in imports:
+    elif install_command and 'gradio' in install_command:
         return SandboxEnvironment.GRADIO
-    elif 'streamlit' in imports:
+    elif install_command and 'streamlit' in install_command:
         return SandboxEnvironment.STREAMLIT
-    # elif 'nicegui' in imports:
+    # elif install_command and 'nicegui' in install_command:
     #     return SandboxEnvironment.NICEGUI
 
     return SandboxEnvironment.PYTHON_RUNNER
 
 
-def determine_jsts_environment(code: str, imports: list[str]) -> SandboxEnvironment | None:
+def determine_jsts_environment(code: str, install_command: str) -> SandboxEnvironment | None:
     '''
-    Determine JavaScript/TypeScript sandbox environment based on imports and AST analysis.
+    Determine JavaScript/TypeScript sandbox environment based on install command and AST analysis.
     '''
     # First check for Vue SFC structure
     if '<template>' in code or '<script setup' in code:
         return SandboxEnvironment.VUE
 
-    # Check imports for framework detection
-    react_packages = {'react', '@react', 'next', '@next'}
+    # Check install command for framework detection
+    react_packages = {'react', '@react', 'next', '@next', '@tanstack/react-query', 'react-query'}
     vue_packages = {'vue', '@vue', 'nuxt', '@nuxt'}
 
-    if any(pkg in react_packages for pkg in imports):
+    if install_command and any(pkg in install_command for pkg in react_packages):
         return SandboxEnvironment.REACT
-    elif any(pkg in vue_packages for pkg in imports):
+    elif install_command and any(pkg in install_command for pkg in vue_packages):
         return SandboxEnvironment.VUE
 
     try:
@@ -345,7 +345,7 @@ def determine_jsts_environment(code: str, imports: list[str]) -> SandboxEnvironm
                 return SandboxEnvironment.VUE
 
     except Exception as e:
-        print(f"Tree-sitter parsing error: {e}")
+        pass
 
     return SandboxEnvironment.JAVASCRIPT_RUNNER
 
@@ -434,7 +434,7 @@ def detect_js_ts_code_lang(code: str) -> str:
             return 'typescript'
 
     except Exception as e:
-        print(f"Tree-sitter parsing error: {e}")
+        pass
         # Fallback to basic checks if parsing fails
         pass
 
@@ -569,17 +569,17 @@ def extract_js_from_html_script_tags(code: str) -> list[str]:
     return list(packages)
 
 
-def extract_code_from_markdown(message: str, enable_auto_env: bool = False) -> tuple[str, str, tuple[list[str], list[str]], SandboxEnvironment | None] | None:
+def extract_code_from_markdown(message: str, enable_auto_env: bool = False) -> tuple[str, str, SandboxEnvironment | None, str] | None:
     '''
     Extracts code from a markdown message by parsing code blocks directly.
     Determines sandbox environment based on code content and frameworks used.
 
     Returns:
-        tuple[str, str, tuple[list[str], list[str]], SandboxEnvironment | None]: A tuple:
+        tuple[str, str, SandboxEnvironment | None, str]: A tuple:
             1. code - the longest code block found
             2. code language
-            3. sandbox python and npm dependencies (extracted using static analysis)
-            4. sandbox environment determined from code content
+            3. sandbox environment determined from code content
+            4. install_command - bash command from ```bash code blocks
     '''
     code_block_regex = r'```(?P<code_lang>[\w\+\#\-\.]*)?[ \t]*\r?\n?(?P<code>.*?)```'
     matches = list(re.finditer(code_block_regex, message, re.DOTALL))
@@ -591,9 +591,19 @@ def extract_code_from_markdown(message: str, enable_auto_env: bool = False) -> t
     low_priority_languages = ['bash', 'shell',
                               'sh', 'zsh', 'powershell', 'pwsh', '']
 
+    # Extract bash commands first
+    install_command = ""
+    bash_matches = [match for match in matches if (match.group('code_lang') or '').lower() in ['bash', 'shell', 'sh']]
+    if bash_matches:
+        # Use the first bash command found, or concatenate multiple if needed
+        install_command = bash_matches[0].group('code').strip()
+        if len(bash_matches) > 1:
+            # If multiple bash blocks, join them with && or newlines
+            install_command = ' && '.join([match.group('code').strip() for match in bash_matches])
+
     # Find the main code block by avoiding low-priority languages
-    main_code = None
-    main_code_lang = None
+    main_code = ""
+    main_code_lang = ""
     max_length = 0
 
     for match in matches:
@@ -604,11 +614,6 @@ def extract_code_from_markdown(message: str, enable_auto_env: bool = False) -> t
             main_code_lang = code_lang
             max_length = len(code)
 
-    # Fallback to the longest code block if no main code was found
-    if not main_code:
-        longest_match = max(matches, key=lambda m: len(m.group('code')))
-        main_code = longest_match.group('code').strip()
-        main_code_lang = (longest_match.group('code_lang') or '').lower()
 
     # Define language prefixes for each environment
     python_prefixes = ['py', 'ipython', 'pygame', 'gradio', 'streamlit']
@@ -625,45 +630,31 @@ def extract_code_from_markdown(message: str, enable_auto_env: bool = False) -> t
     rust_prefixes = ['rust']
     csharp_prefixes = ['cs', 'csharp', 'dotnet']
 
-    # Extract package dependencies from the main program
-    python_packages: list[str] = []
-    npm_packages: list[str] = []
-
     # Helper function to check if any prefix matches
     def matches_prefix(lang: str, prefixes: list[str]) -> bool:
         return any(lang.lower().startswith(prefix) for prefix in prefixes)
 
+    # Determine sandbox environment based on language
     if matches_prefix(main_code_lang, python_prefixes):
-        python_packages = extract_python_imports(main_code)
-        extra_python_packages, main_code = extract_inline_pip_install_commands(
-            main_code)
-        python_packages.extend(extra_python_packages)
-        sandbox_env_name = determine_python_environment(
-            main_code, python_packages)
+        sandbox_env_name =  determine_python_environment(main_code, install_command)
     elif matches_prefix(main_code_lang, vue_prefixes):
-        npm_packages = extract_js_imports(main_code)
         sandbox_env_name = SandboxEnvironment.VUE
         main_code_lang = detect_js_ts_code_lang(main_code)
     elif matches_prefix(main_code_lang, react_prefixes):
-        npm_packages = extract_js_imports(main_code)
         sandbox_env_name = SandboxEnvironment.REACT
         main_code_lang = detect_js_ts_code_lang(main_code)
     elif ('<!DOCTYPE html>' in main_code and ('<head' in main_code or '<body' in main_code)) or (main_code.strip().startswith('<svg')) or (not matches_prefix(main_code_lang, [*react_prefixes, *vue_prefixes, *js_prefixes, *ts_prefixes]) and ('<html' in main_code or '<!DOCTYPE html>' in main_code)):
-        npm_packages = extract_js_from_html_script_tags(main_code)
         sandbox_env_name = SandboxEnvironment.HTML
         main_code_lang = 'html'
     elif matches_prefix(main_code_lang, js_prefixes):
         main_code_lang = 'javascript'
-        npm_packages = extract_js_imports(main_code)
-        sandbox_env_name = determine_jsts_environment(main_code, npm_packages)
+        sandbox_env_name = determine_jsts_environment(main_code, install_command)
     elif matches_prefix(main_code_lang, ts_prefixes):
         main_code_lang = 'typescript'
-        npm_packages = extract_js_imports(main_code)
-        sandbox_env_name = determine_jsts_environment(main_code, npm_packages)
+        sandbox_env_name = determine_jsts_environment(main_code, install_command)
     elif matches_prefix(main_code_lang, html_prefixes):
         main_code_lang = detect_js_ts_code_lang(main_code)
-        npm_packages = extract_js_imports(main_code)
-        sandbox_env_name = determine_jsts_environment(main_code, npm_packages)
+        sandbox_env_name = SandboxEnvironment.HTML
     elif matches_prefix(main_code_lang, mermaid_prefixes):
         main_code_lang = 'markdown'
         sandbox_env_name = SandboxEnvironment.MERMAID
@@ -681,25 +672,14 @@ def extract_code_from_markdown(message: str, enable_auto_env: bool = False) -> t
         sandbox_env_name = SandboxEnvironment.RUST_RUNNER
     elif main_code_lang == 'c':
         main_code_lang = 'c'
-        sandbox_env_name = sandbox_env_name = SandboxEnvironment.C_RUNNER
+        sandbox_env_name = SandboxEnvironment.C_RUNNER
     else:
         sandbox_env_name = None
-
-    all_python_packages: Set[str] = set(python_packages)
-    all_npm_packages: Set[str] = set(npm_packages)
-
-    for match in matches:
-        code = match.group('code').strip()
-        if code != main_code:
-            install_python_packages, install_npm_packages = extract_installation_commands(
-                code)
-            all_python_packages.update(install_python_packages)
-            all_npm_packages.update(install_npm_packages)
 
     if not main_code_lang:
         main_code_lang = 'markdown'
     
-    return main_code, main_code_lang, (list(all_python_packages), list(all_npm_packages)), sandbox_env_name
+    return main_code, main_code_lang, sandbox_env_name, install_command
 
 
 def create_placeholder_svg_data_url(width: int, height: int) -> str:
@@ -735,7 +715,7 @@ def create_placeholder_svg_data_url(width: int, height: int) -> str:
         encoded_svg = base64.b64encode(svg.encode('utf-8')).decode('utf-8')
         return f'data:image/svg+xml;base64,{encoded_svg}'
     except Exception as e:
-        print(f'Error encoding SVG: {e}')
+        pass
         # Fallback to a simple colored div
         return f'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0ie3dpZHRofSIgaGVpZ2h0PSJ7aGVpZ2h0fSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjNmNGY2Ii8+PC9zdmc+'
 
@@ -760,17 +740,17 @@ def replace_placeholder_urls(code: str) -> str:
             
             # Validate dimensions
             if width <= 0 or height <= 0:
-                print(f'Warning: Invalid dimensions {width}x{height}, using default 100x100')
+                pass
                 width, height = 100, 100
             elif width > 10000 or height > 10000:
-                print(f'Warning: Dimensions {width}x{height} are very large, capping at 1000x1000')
+                pass
                 width, height = min(width, 1000), min(height, 1000)
             
-            print(f'Replacing placeholder URL with SVG: {width}x{height}')
+            pass
             data_url = create_placeholder_svg_data_url(width, height)
             return data_url
         except Exception as e:
-            print(f'Error replacing placeholder URL: {e}')
+            pass
             # Return a simple fallback
             return 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjNmNGY2Ii8+PC9zdmc+'
 
@@ -780,10 +760,10 @@ def replace_placeholder_urls(code: str) -> str:
     try:
         # Replace all occurrences
         result = re.sub(pattern, replacer, code)
-        print(f'Placeholder URL replacement completed successfully')
+        pass
         return result
     except Exception as e:
-        print(f'Error during placeholder URL replacement: {e}')
+        pass
         return code  # Return original code if replacement fails
 
 

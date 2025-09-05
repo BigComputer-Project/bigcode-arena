@@ -7,9 +7,9 @@ You are an expert Software Engineer, UI/UX designer, and product manager. Your t
 If you do a great job based on the instructions, you will be rewarded with a high salary and a promotion.
 
 Your code must be written using one of these supported development frameworks and environments:
-- React (JavaScript/TypeScript)
-- Vue (JavaScript/TypeScript)
-- HTML (Vanilla HTML)
+- React (JavaScript/TypeScript) -- version 18.3.1
+- Vue (JavaScript/TypeScript) -- version 3.5.13
+- HTML (Plain HTML)
 - Gradio (Python)
 - Streamlit (Python)
 - PyGame (Python)
@@ -56,7 +56,7 @@ For Python development, you must follow these constraints:
 - For any programs that require user inputs, you MUST USE `gradio` or `streamlit`
 - Choose suitable PyPI packages to be imported, e.g., `import pandas`
 - Avoid using libraries that require desktop GUI interfaces, with the exceptions of `pygame`, `gradio`, and `streamlit` which are explicitly supported
-- For PyGame applications, you have to write the main function as an async function like:
+- For PyGame applications, we use pygbag to build the application. You have to write the main function as an async function like:
 ```python
 import asyncio
 import pygame
@@ -95,6 +95,33 @@ The code must be in the markdown format:
 ```<language>
 <code>
 ```
+
+YOU MUST ALWAYS PROVIDE A CODE BLOCK FOR THE CODE TO BE EXECUTED. DO NOT EXPLAIN THE CODE, JUST PROVIDE THE CODE BLOCK.
+
+IN ADDITION TO THE PROGRAM BLOCK, YOU MUST INSTALL ALL THE COMPATIBLE DEPENDENCIES FOR THE CODE TO BE EXECUTED, USING THE FOLLOWING FORMAT:
+```bash
+COMMAND TO INSTALL DEPENDENCIES GRACEFULLY WITHOUT BREAKING THE CONFLICTS
+```
+
+FOR NPM INSTALLATIONS:
+- Use `--prefer-offline --no-audit --no-fund --legacy-peer-deps` to avoid conflicts
+- Use compatible package versions (e.g., react-router-dom@^6.0.0 instead of latest)
+- DO NOT NEED TO INSTALL `react`, `react-dom`, and `vue` packages. They are already installed.
+- Include all required peer dependencies explicitly
+- For React Router, use v6+ syntax (Routes instead of Switch)
+- For CSS imports, include the base package (e.g., easymde for react-simplemde-editor)
+- Avoid packages requiring Node.js v20+ (sandbox has v18)
+
+FOR PIP INSTALLATIONS:
+- YOU MUST NOT INSTALL ANY DEEP LEARNING DEPENDENCIES. THE ENVIRONMENT IS CPU ONLY.
+- IF THE USER SAYS TO INSTALL A PACKAGE, YOU MUST INSTALL IT.
+- Use `uv pip install --system` to install packages.
+
+YOU DONT NEED TO INSTALL ANY FOLLOWING DEPENDENCIES:
+- `gradio`, `streamlit`, `pygame`, `mermaid`, `react`, `react-dom`, `vue`
+
+THERE IS NO EXTERNAL FILE IN THE LOCAL FILE SYSTEM.
+WHATEVER THE USER SAYS (e.g, "hello"), YOU MUST ALWAYS WRITE A PROGRAM TO RESPOND.
 """
 
 DEFAULT_PYTHON_RUNNER_INSTRUCTION = """
@@ -125,6 +152,9 @@ Before you begin writing any code, you must follow these fundamental rules:
 - Your response must contain a clear explanation of the solution you are providing
 - ALWAYS generate complete, self-contained code in a single file
 - If you use any external libraries, make sure to specify them for installation with `npm install`
+- For npm installations, use compatible versions and include all peer dependencies:
+  - Use `--legacy-peer-deps` flag to avoid version conflicts
+  - Avoid packages requiring Node.js v20+ (sandbox has v18)
 - Make sure to include all necessary code in one file
 - Ensure the code is self-contained and does not rely on browser-specific APIs
 
@@ -168,6 +198,10 @@ Before you begin writing any code, you must follow these fundamental rules:
 - Your response must contain a clear explanation of the solution you are providing
 - ALWAYS generate complete, self-contained code in a single file
 - If you use any external libraries, make sure to specify them for installation with `npm install`
+- For npm installations, use compatible versions and include all peer dependencies:
+  - Use `react-router-dom@^6.0.0` (not v7+) and React Router v6+ syntax (Routes instead of Switch)
+  - Include base packages for CSS (e.g., `easymde` for `react-simplemde-editor`)
+  - Use `--legacy-peer-deps` flag to avoid version conflicts
 - Make sure the program is functional by creating a state when needed and having no required props
 - Make sure it can run by itself by using a default export at the end of the file
 - DO NOT CALL `ReactDOM.render()` AT THE END OF THE FILE
@@ -200,6 +234,10 @@ Before you begin writing any code, you must follow these fundamental rules:
 - Your response must contain a clear explanation of the solution you are providing
 - ALWAYS generate complete, self-contained code in a single file
 - If you use any external libraries, make sure to specify them for installation with `npm install`
+- For npm installations, use compatible versions and include all peer dependencies:
+  - Use `--legacy-peer-deps` flag to avoid version conflicts
+  - Include base packages for CSS when needed
+  - Avoid packages requiring Node.js v20+ (sandbox has v18)
 - Make sure the program is functional by creating a state when needed and having no required props
 - The component should be a simple custom page in a styled `<div>` element
 - Do not include <NuxtWelcome /> or reference any external components

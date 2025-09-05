@@ -29,7 +29,7 @@ SANDBOX_NGINX_PORT: int = 8000
 Nginx port for the sandbox.
 '''
 
-SANDBOX_TIMEOUT_SECONDS: int = 1 * 60
+SANDBOX_TIMEOUT_SECONDS: int = 5 * 60
 '''
 Timeout in seconds for created sandboxes to expire.
 '''

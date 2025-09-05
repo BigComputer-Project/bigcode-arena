@@ -987,9 +987,7 @@ def download_model(model: str, max_workers: int = 64):
     
     try:
         subprocess.run(cmd, env=env, check=True)
-        print(f"Successfully downloaded model '{model}' with {max_workers} max workers.")
     except subprocess.CalledProcessError as e:
-        print(f"Error occurred while downloading the model: {e}")
 
 
 @register_engine("sglang")
@@ -1037,7 +1035,6 @@ def sglang_completion(
         **server_args,
     )
     
-    print(f"DEBUG: sglang_completion: model: {model}")
     
     uid_to_response = batch_submit_sglang(
         executor=executor, 
@@ -1049,13 +1046,11 @@ def sglang_completion(
     )
     
     executor.join()
-    print("DEBUG: sglang_completion: done, sleep 10 seconds...")
     time.sleep(10)
         
     num_null = sum(
         [uid_to_response[uid]['answer'] is None for uid in uids if uid in uid_to_response]
     )
-    print(f"Number of null responses: {num_null}")
     
     records = []
     for i, context in enumerate(processed_context):
@@ -1263,7 +1258,6 @@ def chat_completion_mistral_streaming(model, messages, temperature, max_tokens, 
                 yield chunk.choices[0].delta.content
                 
     except Exception as e:
-        print(f"Error in Mistral streaming completion: {e}")
         yield f"Error: {str(e)}"
 
 
@@ -1300,5 +1294,4 @@ def chat_completion_gemini_streaming(model, messages, **kwargs):
                 yield chunk.text
                 
     except Exception as e:
-        print(f"Error in Gemini streaming completion: {e}")
         yield f"Error: {str(e)}"

@@ -20,7 +20,6 @@ def create_sandbox(template: str = SANDBOX_TEMPLATE_ID) -> Sandbox:
     Create a new sandbox.
     Will retry if the sandbox creation fails.
     '''
-    print("Creating new sandbox...")
     for attempt in range(1, SANDBOX_RETRY_COUNT + 1):
         try:
             return Sandbox(
@@ -90,13 +89,6 @@ def run_command_in_sandbox(
         stderrs.append(str(e))
         is_run_success = False
 
-    if print_output:
-        print(f"Command: {command}")
-        for stdout in stdouts:
-            print(stdout)
-        for stderr in stderrs:
-            print(stderr)
-
     return is_run_success, stdouts, stderrs
 
 
@@ -116,8 +108,6 @@ def install_pip_dependencies(sandbox: Sandbox, dependencies: list[str]) -> list[
                 sandbox.commands.run(
                     f"uv pip install --system {dependency}",
                     timeout=60 * 3,
-                    on_stdout=lambda message: print(message),
-                    on_stderr=lambda message: print(message),
                 )
             except Exception as e:
                 install_errors.append(f"Error during installing pip package {dependency}: {str(e)}")
@@ -178,8 +168,6 @@ def install_npm_dependencies(sandbox: Sandbox, dependencies: list[str], project_
                 f"npm install {dependency} --prefer-offline --no-audit --no-fund --legacy-peer-deps",
                 cwd=project_root,
                 timeout=60 * 3,
-                on_stdout=lambda message: print(message),
-                on_stderr=lambda message: print(message),
             )
         except Exception as e:
             install_errors.append(f"Error during installing npm package {dependency}:" + str(e))
