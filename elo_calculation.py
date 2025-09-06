@@ -9,6 +9,35 @@ import pandas as pd
 from collections import defaultdict
 from tqdm import tqdm
 from sklearn.linear_model import LogisticRegression
+import yaml
+import os
+
+
+def load_model_metadata():
+    """Load model metadata from api_config.yaml"""
+    try:
+        config_path = os.path.join(os.path.dirname(__file__), "api_config.yaml")
+        with open(config_path, "r", encoding="utf-8") as file:
+            config = yaml.safe_load(file)
+
+        metadata = {}
+        for model_key, model_config in config.items():
+            if isinstance(model_config, dict):
+                model_name = model_config.get("model", model_key)
+                metadata[model_name] = {
+                    "organization": model_config.get("organization", "Unknown"),
+                    "license": model_config.get("license", "Unknown"),
+                }
+                # Also store with the key name for lookup
+                metadata[model_key] = {
+                    "organization": model_config.get("organization", "Unknown"),
+                    "license": model_config.get("license", "Unknown"),
+                }
+
+        return metadata
+    except Exception as e:
+        print(f"Warning: Could not load model metadata: {e}")
+        return {}
 
 
 def compute_mle_elo(df, SCALE=400, BASE=10, INIT_RATING=1000, sample_weight=None):
@@ -241,25 +270,36 @@ def calculate_elo_with_confidence_intervals(battles_df, vote_counts):
 def create_ranking_dataframe(elo_ratings, confidence_intervals, vote_counts):
     """
     Create ranking DataFrame with all necessary columns
-    
+
     Args:
         elo_ratings (pd.Series): Elo ratings for each model
-        confidence_intervals (dict): Confidence interval margins for each model  
+        confidence_intervals (dict): Confidence interval margins for each model
         vote_counts (dict): Vote counts for each model
-        
+
     Returns:
-        pd.DataFrame: Ranking table with columns [Rank, Model, Score, 95% CI (±), Votes]
+        pd.DataFrame: Ranking table with columns [Rank, Model, Score, 95% CI (±), Votes, Organization, License]
     """
+    # Load model metadata
+    metadata = load_model_metadata()
+
     # Create ranking list with Elo ratings and confidence intervals
     ranking_list = []
     for model in elo_ratings.index:
         ci_margin = confidence_intervals.get(model, 0)
+
+        # Get metadata for this model
+        model_metadata = metadata.get(model, {})
+        organization = model_metadata.get("organization", "Unknown")
+        license_type = model_metadata.get("license", "Unknown")
+
         ranking_list.append(
             {
                 "Model": model,
                 "Score": round(elo_ratings[model], 1),
                 "95% CI (±)": round(ci_margin, 1) if ci_margin > 0 else "-",
                 "Votes": vote_counts[model],
+                "Organization": organization,
+                "License": license_type,
             }
         )
 
@@ -268,6 +308,8 @@ def create_ranking_dataframe(elo_ratings, confidence_intervals, vote_counts):
     ranking_df["Rank"] = range(1, len(ranking_df) + 1)
 
     # Reorder columns
-    ranking_df = ranking_df[["Rank", "Model", "Score", "95% CI (±)", "Votes"]]
+    ranking_df = ranking_df[
+        ["Rank", "Model", "Score", "95% CI (±)", "Votes", "Organization", "License"]
+    ]
 
     return ranking_df
