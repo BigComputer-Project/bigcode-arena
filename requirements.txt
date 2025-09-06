@@ -24,3 +24,4 @@ e2b-code-interpreter==1.5.2
 azure-storage-blob
 huggingface_hub
 datasets
+scikit-learn

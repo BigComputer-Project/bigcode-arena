@@ -13,6 +13,12 @@ import concurrent.futures
 import time
 from collections import defaultdict
 from datasets import Dataset, load_dataset
+# Import Elo calculation utilities
+from elo_calculation import (
+    calculate_elo_with_confidence_intervals,
+    create_ranking_dataframe,
+)
+
 # Import completion utilities
 from completion import make_config, registered_api_completion
 from sandbox.prompts import GENERAL_SANDBOX_INSTRUCTION
@@ -1120,37 +1126,6 @@ def save_vote_to_hf(
         return False, f"Error saving vote: {str(e)}"
 
 
-def compute_online_elo(battles, K=4, SCALE=400, BASE=10, INIT_RATING=1000):
-    """Compute Elo ratings for models based on battle results"""
-    rating = defaultdict(lambda: INIT_RATING)
-
-    for rd, model_a, model_b, winner in battles[
-        ["model_a", "model_b", "winner"]
-    ].itertuples():
-        ra = rating[model_a]
-        rb = rating[model_b]
-        ea = 1 / (1 + BASE ** ((rb - ra) / SCALE))
-        eb = 1 / (1 + BASE ** ((ra - rb) / SCALE))
-        if winner == "model_a":
-            sa = 1
-        elif winner == "model_b":
-            sa = 0
-        elif winner == "tie" or winner == "tie (bothbad)":
-            sa = 0.5
-        else:
-            raise Exception(f"unexpected vote {winner}")
-        rating[model_a] += K * (sa - ea)
-        rating[model_b] += K * (1 - sa - eb)
-
-    # calibrate llama-13b to 800 if it exists
-    if "llama-13b" in rating:
-        delta = 800 - rating["llama-13b"]
-        for model in battles["model_a"].unique():
-            rating[model] += delta
-
-    return rating
-
-
 def load_ranking_data(hf_token=None, force_reload=False):
     """Load and calculate ranking data from HuggingFace dataset"""
     global ranking_data, ranking_last_updated
@@ -1216,28 +1191,15 @@ def load_ranking_data(hf_token=None, force_reload=False):
         if battles_df.empty:
             return pd.DataFrame()
 
-        # Calculate Elo ratings
-        elo_ratings = compute_online_elo(battles_df)
-
-        # Create ranking list with Elo ratings
-        ranking_list = []
-        for model in elo_ratings.keys():
-            ranking_list.append(
-                {
-                    "Model": model,
-                    "Elo Rating": round(elo_ratings[model], 1),
-                    "Votes": vote_counts[model],
-                }
-            )
-
-        # Sort by Elo rating (highest first)
-        ranking_df = pd.DataFrame(ranking_list).sort_values(
-            "Elo Rating", ascending=False
+        # Calculate Elo ratings using Bradley-Terry Model with confidence intervals
+        elo_ratings, confidence_intervals = calculate_elo_with_confidence_intervals(
+            battles_df, vote_counts
         )
-        ranking_df["Rank"] = range(1, len(ranking_df) + 1)
 
-        # Reorder columns
-        ranking_df = ranking_df[["Rank", "Model", "Elo Rating", "Votes"]]
+        # Create ranking DataFrame
+        ranking_df = create_ranking_dataframe(
+            elo_ratings, confidence_intervals, vote_counts
+        )
 
         ranking_data = ranking_df
         ranking_last_updated = datetime.datetime.now()
@@ -1621,13 +1583,15 @@ def build_ui():
                     headers=[
                         "Rank",
                         "Model",
-                        "Elo Rating",
+                        "Score",
+                        "95% CI (±)",
                         "Votes",
                     ],
                     datatype=[
                         "number",
                         "str",
                         "number",
+                        "str",
                         "number",
                     ],
                     label="Model Rankings",
