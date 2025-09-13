@@ -43,102 +43,103 @@ def load_model_metadata():
 def compute_mle_elo(df, SCALE=400, BASE=10, INIT_RATING=1000, sample_weight=None):
     """Compute Elo ratings using Bradley-Terry Model with Maximum Likelihood Estimation"""
 
-    # Create pivot tables for different outcomes
-    # Check if we have any model_a wins
+    # Get all unique models
+    all_models = sorted(list(set(df["model_a"].tolist() + df["model_b"].tolist())))
+    
+    # Create win matrices for each outcome type
+    # Initialize empty matrices with float dtype to avoid warnings
+    ptbl_a_win = pd.DataFrame(0.0, index=all_models, columns=all_models)
+    ptbl_b_win = pd.DataFrame(0.0, index=all_models, columns=all_models)  
+    ptbl_tie = pd.DataFrame(0.0, index=all_models, columns=all_models)
+
+    # Count wins for model_a
     model_a_wins = df[df["winner"] == "model_a"]
-    if model_a_wins.empty:
-        # Get all unique models to create empty pivot table
-        all_models = list(set(df["model_a"].tolist() + df["model_b"].tolist()))
-        ptbl_a_win = pd.DataFrame(0, index=all_models, columns=all_models)
-    else:
-        ptbl_a_win = pd.pivot_table(
-            model_a_wins,
-            index="model_a",
-            columns="model_b",
-            aggfunc="size",
-            fill_value=0,
-        )
+    if not model_a_wins.empty:
+        a_win_counts = model_a_wins.groupby(["model_a", "model_b"]).size()
+        for (model_a, model_b), count in a_win_counts.items():
+            ptbl_a_win.loc[model_a, model_b] = count
 
-    # Handle ties - if no tie, create a zero matrix
-    if sum(df["winner"].isin(["tie", "tie (bothbad)"])) == 0:
-        ptbl_tie = pd.DataFrame(0, index=ptbl_a_win.index, columns=ptbl_a_win.columns)
-    else:
-        ptbl_tie = pd.pivot_table(
-            df[df["winner"].isin(["tie", "tie (bothbad)"])],
-            index="model_a",
-            columns="model_b",
-            aggfunc="size",
-            fill_value=0,
-        )
-        ptbl_tie = ptbl_tie + ptbl_tie.T
-
-    # Check if we have any model_b wins
+    # Count wins for model_b  
     model_b_wins = df[df["winner"] == "model_b"]
-    if model_b_wins.empty:
-        # Use same structure as ptbl_a_win
-        ptbl_b_win = pd.DataFrame(0, index=ptbl_a_win.index, columns=ptbl_a_win.columns)
-    else:
-        ptbl_b_win = pd.pivot_table(
-            model_b_wins,
-            index="model_a",
-            columns="model_b",
-            aggfunc="size",
-            fill_value=0,
-        )
-        # Ensure same index/columns as ptbl_a_win
-        ptbl_b_win = ptbl_b_win.reindex(
-            index=ptbl_a_win.index, columns=ptbl_a_win.columns, fill_value=0
-        )
+    if not model_b_wins.empty:
+        b_win_counts = model_b_wins.groupby(["model_a", "model_b"]).size()
+        for (model_a, model_b), count in b_win_counts.items():
+            ptbl_b_win.loc[model_a, model_b] = count
 
-    # Combine all outcomes: A wins count as 2, B wins count as 2, ties count as 1 each
-    ptbl_win = ptbl_a_win * 2 + ptbl_b_win.T * 2 + ptbl_tie
+    # Count ties
+    ties = df[df["winner"].isin(["tie", "tie (bothbad)"])]
+    if not ties.empty:
+        tie_counts = ties.groupby(["model_a", "model_b"]).size()
+        for (model_a, model_b), count in tie_counts.items():
+            # For ties, we count 0.5 win for each model
+            ptbl_tie.loc[model_a, model_b] = count * 0.5
+            ptbl_tie.loc[model_b, model_a] = count * 0.5
 
-    models = pd.Series(np.arange(len(ptbl_win.index)), index=ptbl_win.index)
-
+    models = pd.Series(np.arange(len(all_models)), index=all_models)
     p = len(models)
-    X = np.zeros([p * (p - 1) * 2, p])
-    Y = np.zeros(p * (p - 1) * 2)
-
-    cur_row = 0
+    
+    # Create training data for logistic regression
+    X = []
+    Y = []
     sample_weights = []
-    for m_a in ptbl_win.index:
-        for m_b in ptbl_win.columns:
-            if m_a == m_b:
+    
+    for model_a in all_models:
+        for model_b in all_models:
+            if model_a == model_b:
                 continue
-            # if nan skip
-            if math.isnan(ptbl_win.loc[m_a, m_b]) or math.isnan(ptbl_win.loc[m_b, m_a]):
+                
+            # Count total games between these models
+            a_wins = ptbl_a_win.loc[model_a, model_b]
+            b_wins = ptbl_b_win.loc[model_a, model_b] 
+            ties = ptbl_tie.loc[model_a, model_b]
+            
+            total_games = a_wins + b_wins + ties
+            if total_games == 0:
                 continue
+                
+            # Create feature vector: difference in model strengths
+            x = np.zeros(p)
+            x[models[model_a]] = 1.0
+            x[models[model_b]] = -1.0
+            
+            # Add data points for model_a wins
+            if a_wins > 0:
+                X.append(x)
+                Y.append(1)  # model_a wins
+                sample_weights.append(a_wins)
+            
+            # Add data points for model_b wins (model_a loses)
+            if b_wins > 0:
+                X.append(x)  # same feature vector
+                Y.append(0)  # model_a loses
+                sample_weights.append(b_wins)
+                
+            # Add data points for ties - treat as half wins for model_a
+            if ties > 0:
+                # Add ties as both wins and losses with half weight each
+                X.append(x)
+                Y.append(1)  # model_a wins (tie counted as win)
+                sample_weights.append(ties / 2)
+                
+                X.append(x)
+                Y.append(0)  # model_a loses (tie counted as loss)
+                sample_weights.append(ties / 2)
 
-            # Model A vs Model B
-            X[cur_row, models[m_a]] = +math.log(BASE)
-            X[cur_row, models[m_b]] = -math.log(BASE)
-            Y[cur_row] = 1.0
-            sample_weights.append(ptbl_win.loc[m_a, m_b])
+    if len(X) == 0 or len(set(Y)) < 2:
+        # Not enough data or no variation in outcomes
+        return pd.Series({model: INIT_RATING for model in all_models}).sort_values(ascending=False)
 
-            # Model B vs Model A
-            X[cur_row + 1, models[m_a]] = -math.log(BASE)
-            X[cur_row + 1, models[m_b]] = +math.log(BASE)
-            Y[cur_row + 1] = 0.0
-            sample_weights.append(ptbl_win.loc[m_b, m_a])
-            cur_row += 2
+    X = np.array(X)
+    Y = np.array(Y)
+    sample_weights = np.array(sample_weights)
 
-    X = X[:cur_row]
-    Y = Y[:cur_row]
-
-    # Check if we have enough data for fitting
-    if cur_row == 0 or len(set(Y)) < 2:
-        # Not enough data or no variation in outcomes, return default ratings
-        return pd.Series({model: INIT_RATING for model in models.index}).sort_values(
-            ascending=False
-        )
-
-    lr = LogisticRegression(fit_intercept=False, penalty=None, tol=1e-6)
+    # Fit logistic regression
+    lr = LogisticRegression(fit_intercept=False, penalty=None, tol=1e-6, max_iter=1000)
     lr.fit(X, Y, sample_weight=sample_weights)
+    
+    # Convert coefficients to Elo ratings
     elo_scores = SCALE * lr.coef_[0] + INIT_RATING
 
-    # Calibrate to mixtral-8x7b-instruct-v0.1 if it exists
-    if "mixtral-8x7b-instruct-v0.1" in models.index:
-        elo_scores += 1114 - elo_scores[models["mixtral-8x7b-instruct-v0.1"]]
 
     return pd.Series(elo_scores, index=models.index).sort_values(ascending=False)
 
@@ -263,7 +264,6 @@ def calculate_elo_with_confidence_intervals(battles_df, vote_counts):
             old_elo_ratings = compute_online_elo(battles_df)
             elo_ratings = pd.Series(old_elo_ratings)
             confidence_intervals = {model: 0 for model in elo_ratings.index}
-
     return elo_ratings, confidence_intervals
 
 

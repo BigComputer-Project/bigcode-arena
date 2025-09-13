@@ -10,7 +10,9 @@ import datetime
 import os
 import asyncio
 import concurrent.futures
+import random
 import time
+import numpy as np
 from collections import defaultdict
 from datasets import Dataset, load_dataset
 # Import Elo calculation utilities
@@ -124,13 +126,128 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 
 
 def get_random_models():
-    """Get two random models from available models"""
+    """Get two random models from available models using weighted sampling"""
     if len(available_models) < 2:
         return available_models[0] if available_models else None, available_models[0] if available_models else None
     
-    import random
-    models = random.sample(available_models, 2)
-    return models[0], models[1]
+    # Use get_battle_pair for weighted sampling
+    return get_battle_pair(available_models, {}, [], {}, [])
+
+# Configuration for battle sampling
+ANON_MODELS = []  # Models that should not battle against each other in anonymous mode
+BATTLE_STRICT_TARGETS = {}  # Strict battle targets for specific models
+
+def get_sample_weight(model, outage_models, sampling_weights, sampling_boost_models=None):
+    """Get the sampling weight for a model"""
+    # Check if model is in outage
+    if model in outage_models:
+        return 0
+    
+    # Get base weight from API config
+    model_config = api_config.get(model, {})
+    base_weight = model_config.get('weight', 1.0)  # Default weight is 1.0
+    
+    # Apply custom sampling weights if provided
+    if model in sampling_weights:
+        base_weight *= sampling_weights[model]
+    
+    # Apply boost if model is in boost list
+    if sampling_boost_models and model in sampling_boost_models:
+        base_weight *= 2.0  # Example boost factor
+    
+    return base_weight
+
+def is_model_match_pattern(model, pattern):
+    """Check if model matches a pattern (for battle strict targets)"""
+    # Simple pattern matching - can be extended for more complex patterns
+    if isinstance(pattern, str):
+        return pattern in model
+    elif isinstance(pattern, list):
+        return any(p in model for p in pattern)
+    return False
+
+def get_battle_pair(
+    models, battle_targets, outage_models, sampling_weights, sampling_boost_models
+):
+    """
+    Sample a pair of models for battle using weighted sampling.
+    
+    Args:
+        models: List of available model names
+        battle_targets: Dict mapping models to their preferred battle targets
+        outage_models: List of models currently in outage
+        sampling_weights: Dict of custom sampling weights per model
+        sampling_boost_models: List of models to boost in sampling
+    
+    Returns:
+        Tuple of (model_a, model_b) for battle
+    """
+    if len(models) == 1:
+        return models[0], models[0]
+
+    # Calculate weights for all models
+    model_weights = []
+    for model in models:
+        weight = get_sample_weight(
+            model, outage_models, sampling_weights, sampling_boost_models
+        )
+        model_weights.append(weight)
+    total_weight = np.sum(model_weights)
+
+    if total_weight == 0:
+        # Fallback to uniform sampling if all weights are 0
+        return random.sample(models, 2)
+
+    model_weights = np.array(model_weights) / total_weight
+    
+    # Sample first model
+    chosen_idx = np.random.choice(len(models), p=model_weights)
+    chosen_model = models[chosen_idx]
+
+    # Find eligible rival models
+    rival_models = []
+    rival_weights = []
+    for model in models:
+        if model == chosen_model:
+            continue
+        if model in ANON_MODELS and chosen_model in ANON_MODELS:
+            continue
+        if chosen_model in BATTLE_STRICT_TARGETS:
+            if not is_model_match_pattern(model, BATTLE_STRICT_TARGETS[chosen_model]):
+                continue
+        if model in BATTLE_STRICT_TARGETS:
+            if not is_model_match_pattern(chosen_model, BATTLE_STRICT_TARGETS[model]):
+                continue
+        
+        weight = get_sample_weight(model, outage_models, sampling_weights)
+        if (
+            weight != 0
+            and chosen_model in battle_targets
+            and model in battle_targets[chosen_model]
+        ):
+            # boost to higher chance for targeted battles
+            weight = 0.5 * total_weight / len(battle_targets[chosen_model])
+        rival_models.append(model)
+        rival_weights.append(weight)
+    
+    if not rival_models:
+        # Fallback: if no eligible rivals, pick any other model
+        rival_models = [m for m in models if m != chosen_model]
+        if rival_models:
+            rival_model = random.choice(rival_models)
+        else:
+            rival_model = chosen_model
+    else:
+        rival_weights = np.array(rival_weights) / np.sum(rival_weights)
+        rival_idx = np.random.choice(len(rival_models), p=rival_weights)
+        rival_model = rival_models[rival_idx]
+
+    # Randomly swap order
+    swap = np.random.randint(2)
+    if swap == 0:
+        return chosen_model, rival_model
+    else:
+        return rival_model, chosen_model
 
 def create_chat_state(model_name: str) -> dict:
     """Create a new chat state for a model"""
@@ -512,7 +629,7 @@ def clear_chat(state0, state1):
 
     # Get current model names for display
     model_a, model_b = get_random_models()
-
+    print(f"Model A: {model_a}, Model B: {model_b}")
     return (
         None,  # state0
         None,  # state1
@@ -833,7 +950,6 @@ def run_sandbox_code(sandbox_state: dict, code: str, install_command: str) -> tu
 
     # Determine environment
     env = sandbox_state.get('auto_selected_sandbox_environment') or sandbox_state.get('sandbox_environment')
-    print(f"DEBUG: env: {env}")
     try:
         if env == SandboxEnvironment.HTML:
             sandbox_url, sandbox_id, stderr = run_html_sandbox(code, install_command, sandbox_state.get('sandbox_id'))
@@ -1010,7 +1126,7 @@ def build_ui():
 
     # Get random models for this session
     model_a, model_b = get_random_models()
-
+    print(f"Model A: {model_a}, Model B: {model_b}")
     with gr.Blocks(title="BigCodeArena", theme=gr.themes.Soft()) as demo:
         # Add custom CSS for centering and button styling
         demo.css = """

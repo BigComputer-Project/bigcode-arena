@@ -19,6 +19,7 @@ from elo_calculation import (
 # HuggingFace dataset configuration
 HF_DATASET_NAME = os.getenv("HF_DATASET_NAME")
 HF_TOKEN = os.getenv("HF_TOKEN")
+REFRESH_TIME = os.getenv("REFRESH_TIME") or 60*60*12 # 12 hours by default
 
 # Global ranking data cache
 ranking_data = None
@@ -32,7 +33,11 @@ def load_ranking_data(hf_token=None, force_reload=False):
     try:
         # Use global token if not provided
         token = hf_token or HF_TOKEN
+        
         if not token:
+            return pd.DataFrame()
+
+        if not HF_DATASET_NAME:
             return pd.DataFrame()
 
         # Load dataset - force download if requested
@@ -89,6 +94,7 @@ def load_ranking_data(hf_token=None, force_reload=False):
 
         if battles_df.empty:
             return pd.DataFrame()
+
 
         # Calculate Elo ratings using Bradley-Terry Model with confidence intervals
         elo_ratings, confidence_intervals = calculate_elo_with_confidence_intervals(
@@ -167,8 +173,8 @@ def create_ranking_tab():
 
         ranking_last_update = gr.Markdown("**Last Updated:** Not loaded yet")
 
-        # Timer for auto-refresh every 1 minute
-        ranking_timer = gr.Timer(value=60.0, active=True)
+        # Timer for auto-refresh every REFRESH_TIME seconds
+        ranking_timer = gr.Timer(value=REFRESH_TIME, active=True)
 
     return ranking_table, ranking_last_update, ranking_timer
 
