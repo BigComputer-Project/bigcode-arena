@@ -76,7 +76,7 @@ def run_command_in_sandbox(
 
     try:
         if "uv" in command:
-            command = "uv venv;" + command
+            command = "uv venv; source .venv/bin/activate;" + command
         command_result = sandbox.commands.run(
             cmd=command,
             cwd=working_directory,

@@ -5,6 +5,8 @@ gpt-4o-mini-2024-07-18:
     parallel: 32
     max_tokens: 8192
     temperature: 0.0
+    organization: OpenAI
+    license: Proprietary
 
 gpt-4.1-mini-2025-04-14:
     model: gpt-4.1-mini-2025-04-14
@@ -13,6 +15,8 @@ gpt-4.1-mini-2025-04-14:
     parallel: 32
     max_tokens: 8192
     temperature: 0.0
+    organization: OpenAI
+    license: Proprietary
 
 # o1-2024-12-17:
 #     model: o1-2024-12-17
@@ -21,6 +25,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 0.0
+#     organization: OpenAI
+#     license: Proprietary
 
 # o4-mini-2025-04-16:
 #     model: o4-mini-2025-04-16
@@ -29,6 +35,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 1.0
+#     organization: OpenAI
+#     license: Proprietary
 
 # o3-mini-2025-01-31:
 #     model: o3-mini-2025-01-31
@@ -37,6 +45,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 0.0
+#     organization: OpenAI
+#     license: Proprietary
 
 # gemini-2.0-flash-001:
 #     model: google/gemini-2.0-flash-001
@@ -47,6 +57,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 81920
 #     temperature: 0.0
+#     organization: Google
+#     license: Proprietary
 
 # gemini-2.5-pro:
 #     model: google/gemini-2.5-pro
@@ -57,6 +69,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 0.0
+#     organization: Google
+#     license: Proprietary
 
 # gemini-2.5-flash:
 #     model: google/gemini-2.5-flash
@@ -67,6 +81,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 0.0
+#     organization: Google
+#     license: Proprietary
 
 # claude35_haiku:
 #     model: bedrock/anthropic.claude-3-5-haiku-20241022-v1:0
@@ -75,6 +91,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 0.0
+#     organization: Anthropic
+#     license: Proprietary
 
 # claude35_sonnet:
 #     model: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
@@ -83,6 +101,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 0.0
+#     organization: Anthropic
+#     license: Proprietary
 
 # claude37_sonnet:
 #     model: bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0
@@ -91,6 +111,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 0.0
+#     organization: Anthropic
+#     license: Proprietary
 
 # qwen3-coder:
 #     model: qwen/qwen3-coder
@@ -101,6 +123,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 0.0
+#     organization: Alibaba
+#     license: Apache 2.0
 
 # kimi-k2:
 #     model: moonshotai/kimi-k2
@@ -111,6 +135,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 0.0
+#     organization: Moonshot
+#     license: Modified MIT
 
 # claude-4-sonnet:
 #     model: bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0
@@ -119,6 +145,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 16
 #     max_tokens: 8192
 #     temperature: 0.0
+#     organization: Anthropic
+#     license: Proprietary
 
 # claude-4-opus:
 #     model: bedrock/us.anthropic.claude-opus-4-20250514-v1:0
@@ -127,6 +155,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 16
 #     max_tokens: 8192
 #     temperature: 0.0
+#     organization: Anthropic
+#     license: Proprietary
 
 # gpt-oss-120b:
 #     model: openai/gpt-oss-120b
@@ -137,6 +167,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 1.0
+#     organization: OpenAI
+#     license: MIT
 
 # gpt-oss-20b:
 #     model: openai/gpt-oss-20b
@@ -147,6 +179,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 1.0
+#     organization: OpenAI
+#     license: MIT
 
 # deepseek-chat-v3-0324:
 #     model: deepseek/deepseek-chat-v3-0324
@@ -157,6 +191,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 0.0
+#     organization: DeepSeek
+#     license: MIT
 
 # deepseek-chat-v3.1:
 #     model: deepseek-chat
@@ -167,6 +203,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 0.0
+#     organization: DeepSeek
+#     license: MIT
 
 # glm-4.5:
 #     model: z-ai/glm-4.5
@@ -177,6 +215,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 0.0
+#     organization: Zhipu AI
+#     license: Custom
 
 # gpt-4.1-2025-04-14:
 #     model: gpt-4.1-2025-04-14
@@ -185,6 +225,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 0.0
+#     organization: OpenAI
+#     license: Proprietary
 
 
 # deepseek-r1-0528:
@@ -196,6 +238,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 81920
 #     temperature: 1.0
+#     organization: DeepSeek
+#     license: MIT
 
 # gpt-5-2025-08-07:
 #     model: gpt-5-2025-08-07
@@ -204,6 +248,8 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 1.0
+#     organization: OpenAI
+#     license: Proprietary
 
 # grok-code:
 #     model: x-ai/grok-code-fast-1
@@ -214,3 +260,5 @@ gpt-4.1-mini-2025-04-14:
 #     parallel: 32
 #     max_tokens: 8192
 #     temperature: 1.0
+#     organization: xAI
+#     license: Proprietary

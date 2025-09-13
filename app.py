@@ -10,8 +10,37 @@ import datetime
 import os
 import asyncio
 import concurrent.futures
+import random
 import time
+import numpy as np
+from collections import defaultdict
 from datasets import Dataset, load_dataset
+# Import Elo calculation utilities
+from elo_calculation import (
+    calculate_elo_with_confidence_intervals,
+    create_ranking_dataframe,
+)
+
+# Import ranking functionality
+from ranking import (
+    load_ranking_data,
+    update_ranking_display,
+    force_update_ranking_display,
+    create_ranking_tab,
+    setup_ranking_handlers,
+)
+
+# Import voting functionality
+from voting import (
+    handle_vote,
+    save_vote_to_hf,
+    serialize_interactions,
+    create_vote_ui,
+    should_show_vote_buttons,
+    get_vote_ui_updates,
+    setup_vote_handlers,
+)
+
 # Import completion utilities
 from completion import make_config, registered_api_completion
 from sandbox.prompts import GENERAL_SANDBOX_INSTRUCTION
@@ -95,18 +124,130 @@ available_models = list(api_config.keys()) if api_config else []
 HF_DATASET_NAME = os.getenv("HF_DATASET_NAME")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-# Global ranking data cache
-ranking_data = None
-ranking_last_updated = None
 
 def get_random_models():
-    """Get two random models from available models"""
+    """Get two random models from available models using weighted sampling"""
     if len(available_models) < 2:
         return available_models[0] if available_models else None, available_models[0] if available_models else None
     
-    import random
-    models = random.sample(available_models, 2)
-    return models[0], models[1]
+    # Use get_battle_pair for weighted sampling
+    return get_battle_pair(available_models, {}, [], {}, [])
+
+# Configuration for battle sampling
+ANON_MODELS = []  # Models that should not battle against each other in anonymous mode
+BATTLE_STRICT_TARGETS = {}  # Strict battle targets for specific models
+
+def get_sample_weight(model, outage_models, sampling_weights, sampling_boost_models=None):
+    """Get the sampling weight for a model"""
+    # Check if model is in outage
+    if model in outage_models:
+        return 0
+    
+    # Get base weight from API config
+    model_config = api_config.get(model, {})
+    base_weight = model_config.get('weight', 1.0)  # Default weight is 1.0
+    
+    # Apply custom sampling weights if provided
+    if model in sampling_weights:
+        base_weight *= sampling_weights[model]
+    
+    # Apply boost if model is in boost list
+    if sampling_boost_models and model in sampling_boost_models:
+        base_weight *= 2.0  # Example boost factor
+    
+    return base_weight
+
+def is_model_match_pattern(model, pattern):
+    """Check if model matches a pattern (for battle strict targets)"""
+    # Simple pattern matching - can be extended for more complex patterns
+    if isinstance(pattern, str):
+        return pattern in model
+    elif isinstance(pattern, list):
+        return any(p in model for p in pattern)
+    return False
+
+def get_battle_pair(
+    models, battle_targets, outage_models, sampling_weights, sampling_boost_models
+):
+    """
+    Sample a pair of models for battle using weighted sampling.
+    
+    Args:
+        models: List of available model names
+        battle_targets: Dict mapping models to their preferred battle targets
+        outage_models: List of models currently in outage
+        sampling_weights: Dict of custom sampling weights per model
+        sampling_boost_models: List of models to boost in sampling
+    
+    Returns:
+        Tuple of (model_a, model_b) for battle
+    """
+    if len(models) == 1:
+        return models[0], models[0]
+
+    # Calculate weights for all models
+    model_weights = []
+    for model in models:
+        weight = get_sample_weight(
+            model, outage_models, sampling_weights, sampling_boost_models
+        )
+        model_weights.append(weight)
+    total_weight = np.sum(model_weights)
+
+    if total_weight == 0:
+        # Fallback to uniform sampling if all weights are 0
+        return random.sample(models, 2)
+
+    model_weights = np.array(model_weights) / total_weight
+    
+    # Sample first model
+    chosen_idx = np.random.choice(len(models), p=model_weights)
+    chosen_model = models[chosen_idx]
+
+    # Find eligible rival models
+    rival_models = []
+    rival_weights = []
+    for model in models:
+        if model == chosen_model:
+            continue
+        if model in ANON_MODELS and chosen_model in ANON_MODELS:
+            continue
+        if chosen_model in BATTLE_STRICT_TARGETS:
+            if not is_model_match_pattern(model, BATTLE_STRICT_TARGETS[chosen_model]):
+                continue
+        if model in BATTLE_STRICT_TARGETS:
+            if not is_model_match_pattern(chosen_model, BATTLE_STRICT_TARGETS[model]):
+                continue
+        
+        weight = get_sample_weight(model, outage_models, sampling_weights)
+        if (
+            weight != 0
+            and chosen_model in battle_targets
+            and model in battle_targets[chosen_model]
+        ):
+            # boost to higher chance for targeted battles
+            weight = 0.5 * total_weight / len(battle_targets[chosen_model])
+        rival_models.append(model)
+        rival_weights.append(weight)
+    
+    if not rival_models:
+        # Fallback: if no eligible rivals, pick any other model
+        rival_models = [m for m in models if m != chosen_model]
+        if rival_models:
+            rival_model = random.choice(rival_models)
+        else:
+            rival_model = chosen_model
+    else:
+        rival_weights = np.array(rival_weights) / np.sum(rival_weights)
+        rival_idx = np.random.choice(len(rival_models), p=rival_weights)
+        rival_model = rival_models[rival_idx]
+
+    # Randomly swap order
+    swap = np.random.randint(2)
+    if swap == 0:
+        return chosen_model, rival_model
+    else:
+        return rival_model, chosen_model
 
 def create_chat_state(model_name: str) -> dict:
     """Create a new chat state for a model"""
@@ -488,7 +629,7 @@ def clear_chat(state0, state1):
 
     # Get current model names for display
     model_a, model_b = get_random_models()
-
+    print(f"Model A: {model_a}, Model B: {model_b}")
     return (
         None,  # state0
         None,  # state1
@@ -524,52 +665,49 @@ def retry_last_message(state0, state1, model_a, model_b):
     """Retry the last user message"""
     if not state0 or not state1:
         return state0, state1, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
-    
+
     # Get the last user message
     last_user_message = ""
     for msg in reversed(state0["messages"]):
         if msg["role"] == "user":
             last_user_message = msg["content"]
             break
-    
+
     if not last_user_message:
         return state0, state1, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
-    
+
     # Remove the last user message and assistant responses from both states
     if state0["messages"] and state0["messages"][-1]["role"] == "assistant":
         state0["messages"].pop()  # Remove last assistant response
     if state0["messages"] and state0["messages"][-1]["role"] == "user":
         state0["messages"].pop()  # Remove last user message
-    
+
     if state1["messages"] and state1["messages"][-1]["role"] == "assistant":
         state1["messages"].pop()  # Remove last assistant response
     if state1["messages"] and state1["messages"][-1]["role"] == "user":
         state1["messages"].pop()  # Remove last user message
-    
+
     # Generate new responses with the same message
     result = add_text_and_generate(state0, state1, last_user_message, 0.4, 8192, model_a, model_b)
-    
+
     # Extract the state from the result
     new_state0, new_state1 = result[0], result[1]
-    
+
     # Check if both models have output and are not generating to show vote buttons
-    show_vote_buttons = (
-        new_state0
-        and new_state0.get("has_output", False)
-        and not new_state0.get("generating", False)
-        and new_state1
-        and new_state1.get("has_output", False)
-        and not new_state1.get("generating", False)
-    )
-    
+    show_vote_buttons = should_show_vote_buttons(new_state0, new_state1)
+
     # Return all the original outputs plus the updated state for run buttons
     return (
         new_state0,  # state0
         new_state1,  # state1
         result[2],  # chatbot_a (chat0)
         result[3],  # chatbot_b (chat1)
-        result[4]["content"] if isinstance(result[4], dict) else result[4],  # response_a (response0)
-        result[5]["content"] if isinstance(result[5], dict) else result[5],  # response_b (response1)
+        (
+            result[4]["content"] if isinstance(result[4], dict) else result[4]
+        ),  # response_a (response0)
+        (
+            result[5]["content"] if isinstance(result[5], dict) else result[5]
+        ),  # response_b (response1)
         result[6],  # code_a (code0)
         result[7],  # code_b (code1)
         result[10] if len(result) > 10 else "",  # sandbox_state0
@@ -608,37 +746,37 @@ def send_to_left_only(state0, state1, text, temperature, max_tokens, model_a, mo
     """Send message to left model (Model A) only"""
     if not text.strip():
         return state0, state1, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
-    
+
     # Initialize states if needed
     if state0 is None:
         state0 = create_chat_state(model_a)
     if state1 is None:
         state1 = create_chat_state(model_b)
-    
+
     # Add user message to left state only
     state0["messages"].append({"role": "user", "content": text})
     state0["generating"] = True
-    
+
     # Generate response for left model only
     state0, response0 = generate_response_with_completion(state0, temperature, max_tokens)
     state0["messages"].append({"role": "assistant", "content": response0["content"]})
     state0["has_output"] = True
     state0["generating"] = False
-    
+
     # Format chat history for display
     chat0 = format_chat_history(state0["messages"])
     chat1 = format_chat_history(state1["messages"]) if state1 else []
-    
+
     # Extract code from response for sandbox
     sandbox_state0 = state0.get("sandbox_state", create_sandbox_state())
     sandbox_state0, code0, env0 = extract_and_execute_code(response0["content"], sandbox_state0)
     state0["sandbox_state"] = sandbox_state0
-    
+
     # Clear previous sandbox outputs
     sandbox_output0 = ""
     sandbox_component_update0 = gr.update(value=("", False, []), visible=False)
     sandbox_view_a = ""
-    
+
     # Run sandbox execution if there's code
     if code0.strip():
         install_command0 = sandbox_state0.get('install_command', "")
@@ -653,28 +791,33 @@ def send_to_left_only(state0, state1, text, temperature, max_tokens, model_a, mo
             sandbox_view_a += f"# Output\n{sandbox_output0}"
         if sandbox_error0:
             sandbox_view_a = f"<details closed><summary><strong>🚨 Errors/Warnings</strong></summary>\n\n```\n{sandbox_error0.strip()}\n```\n\n</details>\n\n" + sandbox_view_a
-    
     # Calculate conversation statistics
     turn_count_a = len([msg for msg in state0["messages"] if msg["role"] == "assistant" and msg["content"]])
     turn_count_b = len([msg for msg in state1["messages"] if msg["role"] == "assistant" and msg["content"]]) if state1 else 0
-    
+
     chat_stats_a = f"**Conversation:** {turn_count_a} turns | **Total Messages:** {len(state0['messages'])}"
     chat_stats_b = f"**Conversation:** {turn_count_b} turns | **Total Messages:** {len(state1['messages']) if state1 else 0}"
-    
+
     # Don't show vote buttons since only one model responded
     show_vote_buttons = False
-    
+
     return (
         state0,  # state0
         state1,  # state1
         chat0,  # chatbot_a
         chat1,  # chatbot_b
-        response0["content"] if isinstance(response0, dict) else response0,  # response_a
+        (
+            response0["content"] if isinstance(response0, dict) else response0
+        ),  # response_a
         "",  # response_b (empty)
         code0,  # code_a
         "",  # code_b (empty)
         sandbox_state0,  # sandbox_state0
-        state1.get("sandbox_state", create_sandbox_state()) if state1 else create_sandbox_state(),  # sandbox_state1
+        (
+            state1.get("sandbox_state", create_sandbox_state())
+            if state1
+            else create_sandbox_state()
+        ),  # sandbox_state1
         sandbox_output0,  # sandbox_output0
         "",  # sandbox_output1 (empty)
         sandbox_component_update0,  # sandbox_component_update0
@@ -701,37 +844,37 @@ def send_to_right_only(state0, state1, text, temperature, max_tokens, model_a, m
     """Send message to right model (Model B) only"""
     if not text.strip():
         return state0, state1, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
-    
+
     # Initialize states if needed
     if state0 is None:
         state0 = create_chat_state(model_a)
     if state1 is None:
         state1 = create_chat_state(model_b)
-    
+
     # Add user message to right state only
     state1["messages"].append({"role": "user", "content": text})
     state1["generating"] = True
-    
+
     # Generate response for right model only
     state1, response1 = generate_response_with_completion(state1, temperature, max_tokens)
     state1["messages"].append({"role": "assistant", "content": response1["content"]})
     state1["has_output"] = True
     state1["generating"] = False
-    
+
     # Format chat history for display
     chat0 = format_chat_history(state0["messages"]) if state0 else []
     chat1 = format_chat_history(state1["messages"])
-    
+
     # Extract code from response for sandbox
     sandbox_state1 = state1.get("sandbox_state", create_sandbox_state())
     sandbox_state1, code1, env1 = extract_and_execute_code(response1["content"], sandbox_state1)
     state1["sandbox_state"] = sandbox_state1
-    
+
     # Clear previous sandbox outputs
     sandbox_output1 = ""
     sandbox_component_update1 = gr.update(value=("", False, []), visible=False)
     sandbox_view_b = ""
-    
+
     # Run sandbox execution if there's code
     if code1.strip():
         install_command1 = sandbox_state1.get('install_command', "")
@@ -746,27 +889,32 @@ def send_to_right_only(state0, state1, text, temperature, max_tokens, model_a, m
             sandbox_view_b += f"# Output\n{sandbox_output1}"
         if sandbox_error1:
             sandbox_view_b = f"<details closed><summary><strong>🚨 Errors/Warnings</strong></summary>\n\n```\n{sandbox_error1.strip()}\n```\n\n</details>\n\n" + sandbox_view_b
-    
     # Calculate conversation statistics
     turn_count_a = len([msg for msg in state0["messages"] if msg["role"] == "assistant" and msg["content"]]) if state0 else 0
     turn_count_b = len([msg for msg in state1["messages"] if msg["role"] == "assistant" and msg["content"]])
-    
+
     chat_stats_a = f"**Conversation:** {turn_count_a} turns | **Total Messages:** {len(state0['messages']) if state0 else 0}"
     chat_stats_b = f"**Conversation:** {turn_count_b} turns | **Total Messages:** {len(state1['messages'])}"
-    
+
     # Don't show vote buttons since only one model responded
     show_vote_buttons = False
-    
+
     return (
         state0,  # state0
         state1,  # state1
         chat0,  # chatbot_a
         chat1,  # chatbot_b
         "",  # response_a (empty)
-        response1["content"] if isinstance(response1, dict) else response1,  # response_b
+        (
+            response1["content"] if isinstance(response1, dict) else response1
+        ),  # response_b
         "",  # code_a (empty)
         code1,  # code_b
-        state0.get("sandbox_state", create_sandbox_state()) if state0 else create_sandbox_state(),  # sandbox_state0
+        (
+            state0.get("sandbox_state", create_sandbox_state())
+            if state0
+            else create_sandbox_state()
+        ),  # sandbox_state0
         sandbox_state1,  # sandbox_state1
         "",  # sandbox_output0 (empty)
         sandbox_output1,  # sandbox_output1
@@ -791,90 +939,6 @@ def send_to_right_only(state0, state1, text, temperature, max_tokens, model_a, m
     )
 
 
-def handle_vote(state0, state1, vote_type):
-    """Handle vote submission"""
-    if (
-        not state0
-        or not state1
-        or not state0.get("has_output")
-        or not state1.get("has_output")
-    ):
-        return (
-            "No output to vote on!",
-            gr.update(),
-            "**Last Updated:** No data available",
-        )
-
-    # Get all user messages and the last responses
-    user_messages = []
-    response_a = ""
-    response_b = ""
-
-    # Collect all user messages from the conversation
-    for msg in state0["messages"]:
-        if msg["role"] == "user":
-            user_messages.append(msg["content"])
-
-    for msg in reversed(state0["messages"]):
-        if msg["role"] == "assistant":
-            response_a = msg["content"]
-            break
-
-    for msg in reversed(state1["messages"]):
-        if msg["role"] == "assistant":
-            response_b = msg["content"]
-            break
-
-    # Get interactions and full conversation history for remote dataset saving
-    interactions_a = state0.get("interactions", [])
-    interactions_b = state1.get("interactions", [])
-    
-    # Get full conversation history for both models
-    conversation_a = state0.get("messages", [])
-    conversation_b = state1.get("messages", [])
-    
-    # Save vote with full conversation history to remote dataset in background (async)
-    import threading
-    def save_vote_background():
-        try:
-            success, message = save_vote_to_hf(
-                state0["model_name"],
-                state1["model_name"],
-                user_messages[0],
-                response_a,
-                response_b,
-                vote_type,
-                interactions_a,
-                interactions_b,
-                conversation_a,
-                conversation_b,
-            )
-
-        except Exception as e:
-            print(f"Error saving vote: {str(e)}")
-            pass
-    
-    print("Saving vote in background...")
-    # Start background upload thread
-    upload_thread = threading.Thread(target=save_vote_background)
-    upload_thread.daemon = True
-    upload_thread.start()
-    
-    # Return immediately without waiting for upload
-    success = True  # Assume success for immediate UI response
-    message = "Vote recorded! Uploading data in background..."
-
-    if success:
-        # Return immediately without waiting for ranking refresh
-        return (
-            message + " Clearing conversation...",
-            gr.update(),  # Keep existing ranking table
-            "**Last Updated:** Processing in background...",
-        )
-    else:
-        return message, gr.update(), "**Last Updated:** Error occurred"
-
-
 def run_sandbox_code(sandbox_state: dict, code: str, install_command: str) -> tuple[str, str, str]:
     """Run code in the appropriate sandbox environment"""
     if not code.strip():
@@ -886,7 +950,6 @@ def run_sandbox_code(sandbox_state: dict, code: str, install_command: str) -> tu
 
     # Determine environment
     env = sandbox_state.get('auto_selected_sandbox_environment') or sandbox_state.get('sandbox_environment')
-    print(f"DEBUG: env: {env}")
     try:
         if env == SandboxEnvironment.HTML:
             sandbox_url, sandbox_id, stderr = run_html_sandbox(code, install_command, sandbox_state.get('sandbox_id'))
@@ -979,227 +1042,28 @@ async def run_sandbox_code_async(sandbox_state: dict, code: str, install_command
 async def run_sandboxes_parallel(sandbox_state0, code0, install_command0, sandbox_state1, code1, install_command1):
     """Run both sandbox executions in parallel with error handling"""
     loop = asyncio.get_event_loop()
-    
+
     # Create tasks for both sandbox executions
     task0 = loop.run_in_executor(None, run_sandbox_code, sandbox_state0, code0, install_command0)
     task1 = loop.run_in_executor(None, run_sandbox_code, sandbox_state1, code1, install_command1)
-    
+
     # Wait for both to complete with error handling
     try:
         result0, result1 = await asyncio.gather(task0, task1, return_exceptions=True)
-        
+
         # Handle exceptions
         if isinstance(result0, Exception):
             result0 = ("", "", f"Sandbox execution error: {str(result0)}")
-        
+
         if isinstance(result1, Exception):
             result1 = ("", "", f"Sandbox execution error: {str(result1)}")
-            
+
     except Exception as e:
         # Fallback to sequential processing
         result0 = run_sandbox_code(sandbox_state0, code0, install_command0)
         result1 = run_sandbox_code(sandbox_state1, code1, install_command1)
-    
+
     return result0, result1
-
-
-def serialize_interactions(interactions):
-    """Convert datetime objects in interactions to ISO format strings"""
-    if not interactions:
-        return interactions
-    
-    serialized = []
-    for interaction in interactions:
-        # Handle case where interaction might be a list instead of a dict
-        if isinstance(interaction, list):
-            # If it's a list, recursively serialize each item
-            serialized.append(serialize_interactions(interaction))
-        elif isinstance(interaction, dict):
-            # If it's a dict, serialize it normally
-            serialized_interaction = {}
-            for key, value in interaction.items():
-                if isinstance(value, datetime.datetime):
-                    serialized_interaction[key] = value.isoformat()
-                else:
-                    serialized_interaction[key] = value
-            serialized.append(serialized_interaction)
-        else:
-            # If it's neither list nor dict, just add it as is
-            serialized.append(interaction)
-    return serialized
-
-
-def save_vote_to_hf(
-    model_a, model_b, prompt, response_a, response_b, vote_result, interactions_a=None, interactions_b=None, conversation_a=None, conversation_b=None, hf_token=None
-):
-    """Save vote result to HuggingFace dataset with full conversation history"""
-    try:
-        # Use global token if not provided
-        token = hf_token or HF_TOKEN
-        if not token:
-            return False, "HuggingFace token not found in environment (HF_TOKEN)"
-        
-        if not HF_DATASET_NAME:
-            return False, "HuggingFace dataset name not found in environment (HF_DATASET_NAME)"
-        
-
-        # Serialize conversations for JSON compatibility
-        serialized_conversation_a = serialize_interactions(conversation_a or [])
-        serialized_conversation_b = serialize_interactions(conversation_b or [])
-        
-        # Organize interactions by turns - each turn contains a list of interactions
-        def organize_interactions_by_turns(interactions, conversation):
-            """Organize interactions by conversation turns"""
-            if not interactions:
-                return []
-            
-            # For now, put all interactions in a single turn
-            # This can be enhanced later to properly group by conversation turns
-            # when we have more context about how interactions are timestamped
-            return interactions if interactions else []
-        
-        # Organize interactions by turns for both models
-        action_a = organize_interactions_by_turns(interactions_a or [], conversation_a or [])
-        action_b = organize_interactions_by_turns(interactions_b or [], conversation_b or [])
-        
-        # Serialize actions for JSON compatibility
-        serialized_action_a = serialize_interactions(action_a)
-        serialized_action_b = serialize_interactions(action_b)
-        
-        # Create vote data with full conversation history and actions organized by turns
-        # Each conversation is a list of messages in format: [{"role": "user"/"assistant", "content": "...", "action": [...]}, ...]
-        # Actions are organized as list of lists: [[turn1_interactions], [turn2_interactions], ...]
-        vote_data = {
-            "timestamp": datetime.datetime.now().isoformat(),
-            "model_a": model_a,
-            "model_b": model_b,
-            "initial_prompt": prompt,  # Convert list to single string
-            "action_a": serialized_action_a,  # Actions organized by turns for model A
-            "action_b": serialized_action_b,  # Actions organized by turns for model B
-            "conversation_a": serialized_conversation_a,  # Full conversation history for model A
-            "conversation_b": serialized_conversation_b,  # Full conversation history for model B
-            "vote": vote_result,  # "left", "right", "tie", "both_bad"
-        }
-
-        # Try to load existing dataset or create new one
-        try:
-            dataset = load_dataset(HF_DATASET_NAME, split="train", token=token)
-            # Convert to pandas DataFrame - handle both Dataset and DatasetDict
-            if hasattr(dataset, "to_pandas"):
-                df = dataset.to_pandas()
-            else:
-                df = pd.DataFrame(dataset)
-            # Add new vote
-            new_df = pd.concat([df, pd.DataFrame([vote_data])], ignore_index=True)
-        except Exception as load_error:
-            # Create new dataset if it doesn't exist
-            new_df = pd.DataFrame([vote_data])
-
-        
-        # Convert back to dataset and push
-        new_dataset = Dataset.from_pandas(new_df)
-        try:
-            new_dataset.push_to_hub(HF_DATASET_NAME, token=token)
-            return True, "Vote saved successfully!"
-        except Exception as upload_error:
-            return False, f"Error uploading to HuggingFace: {str(upload_error)}"
-    except Exception as e:
-        return False, f"Error saving vote: {str(e)}"
-
-
-def load_ranking_data(hf_token=None, force_reload=False):
-    """Load and calculate ranking data from HuggingFace dataset"""
-    global ranking_data, ranking_last_updated
-
-    try:
-        # Use global token if not provided
-        token = hf_token or HF_TOKEN
-        if not token:
-            return pd.DataFrame()
-
-        # Load dataset - force download if requested
-        if force_reload:
-            # Force download from remote, ignore cache
-            dataset = load_dataset(
-                HF_DATASET_NAME,
-                split="train",
-                token=token,
-                download_mode="force_redownload",
-            )
-        else:
-            dataset = load_dataset(HF_DATASET_NAME, split="train", token=token)
-        # Convert to pandas DataFrame - handle both Dataset and DatasetDict
-        if hasattr(dataset, "to_pandas"):
-            df = dataset.to_pandas()
-        else:
-            df = pd.DataFrame(dataset)
-
-        if df.empty:
-            return pd.DataFrame()
-
-        # Calculate rankings
-        model_stats = {}
-
-        for _, row in df.iterrows():
-            model_a = row["model_a"]
-            model_b = row["model_b"]
-            vote = row["vote"]
-
-            # Initialize models if not exists
-            if model_a not in model_stats:
-                model_stats[model_a] = {"wins": 0, "losses": 0, "ties": 0, "total": 0}
-            if model_b not in model_stats:
-                model_stats[model_b] = {"wins": 0, "losses": 0, "ties": 0, "total": 0}
-
-            # Update stats based on vote
-            if vote == "left":  # Model A wins
-                model_stats[model_a]["wins"] += 1
-                model_stats[model_b]["losses"] += 1
-            elif vote == "right":  # Model B wins
-                model_stats[model_b]["wins"] += 1
-                model_stats[model_a]["losses"] += 1
-            elif vote == "tie":
-                model_stats[model_a]["ties"] += 1
-                model_stats[model_b]["ties"] += 1
-            # both_bad doesn't count as win/loss for either
-
-            model_stats[model_a]["total"] += 1
-            model_stats[model_b]["total"] += 1
-
-        # Convert to DataFrame and calculate win rate
-        ranking_list = []
-        for model, stats in model_stats.items():
-            win_rate = (
-                (stats["wins"] + stats["ties"]) / max(stats["total"], 1) * 100
-            )
-            ranking_list.append(
-                {
-                    "Model": model,
-                    "Win Rate (%)": round(win_rate, 1),
-                    "Wins": stats["wins"],
-                    "Losses": stats["losses"],
-                    "Ties": stats["ties"],
-                    "Total Battles": stats["total"],
-                }
-            )
-
-        # Sort by win rate
-        ranking_df = pd.DataFrame(ranking_list).sort_values(
-            "Win Rate (%)", ascending=False
-        )
-        ranking_df["Rank"] = range(1, len(ranking_df) + 1)
-
-        # Reorder columns
-        ranking_df = ranking_df[
-            ["Rank", "Model", "Win Rate (%)", "Wins", "Losses", "Ties", "Total Battles"]
-        ]
-
-        ranking_data = ranking_df
-        ranking_last_updated = datetime.datetime.now()
-
-        return ranking_df
-    except Exception as e:
-        return pd.DataFrame()
 
 
 def instantiate_send_button():
@@ -1262,7 +1126,7 @@ def build_ui():
 
     # Get random models for this session
     model_a, model_b = get_random_models()
-
+    print(f"Model A: {model_a}, Model B: {model_b}")
     with gr.Blocks(title="BigCodeArena", theme=gr.themes.Soft()) as demo:
         # Add custom CSS for centering and button styling
         demo.css = """
@@ -1296,7 +1160,7 @@ def build_ui():
             min-width: 60px;
         }
         """
-        
+
         gr.Markdown("# 🌸 BigCodeArena - Start Your Vibe Coding!", elem_classes="center-text")
 
         # Main tabs
@@ -1361,25 +1225,15 @@ def build_ui():
                                         interactive=False,
                                     )
 
-                # Vote buttons section - only visible after output
-                with gr.Row(visible=False) as vote_section:
-                    gr.Markdown("### 🗳️ Which response is better?")
-                with gr.Row(visible=False) as vote_buttons_row:
-                    vote_left_btn = gr.Button(
-                        "👍 A is Better", variant="primary", size="lg"
-                    )
-                    vote_tie_btn = gr.Button(
-                        "🤝 It's a Tie", variant="secondary", size="lg"
-                    )
-                    vote_both_bad_btn = gr.Button(
-                        "👎 Both are Bad", variant="secondary", size="lg"
-                    )
-                    vote_right_btn = gr.Button(
-                        "👍 B is Better", variant="primary", size="lg"
-                    )
-
-                # Vote status message
-                vote_status = gr.Markdown("", visible=False)
+                # Vote UI components
+                vote_components = create_vote_ui()
+                vote_section = vote_components["vote_section"]
+                vote_buttons_row = vote_components["vote_buttons_row"]
+                vote_left_btn = vote_components["vote_left_btn"]
+                vote_right_btn = vote_components["vote_right_btn"]
+                vote_tie_btn = vote_components["vote_tie_btn"]
+                vote_both_bad_btn = vote_components["vote_both_bad_btn"]
+                vote_status = vote_components["vote_status"]
 
                 # Main chat interface - Collapsible and hidden by default
                 with gr.Accordion("💬 Chat Interface", open=False):
@@ -1419,7 +1273,7 @@ def build_ui():
                         with gr.Row():
                             send_left_btn = instantiate_send_left_button()
                             send_right_btn = instantiate_send_right_button()
-                            
+
                 # Additional control buttons
                 with gr.Row():
                     clear_btn = gr.Button("🗑️ Clear Chat", variant="secondary")
@@ -1568,38 +1422,7 @@ def build_ui():
                     inputs=[text_input],
                 )
             # Ranking Tab
-            with gr.Tab("📊 Ranking", id="ranking"):
-                gr.Markdown("## 🏆 Model Leaderboard")
-                gr.Markdown("*Rankings auto-refresh every 10 minutes*")
-
-                ranking_table = gr.Dataframe(
-                    headers=[
-                        "Rank",
-                        "Model",
-                        "Win Rate (%)",
-                        "Wins",
-                        "Losses",
-                        "Ties",
-                        "Total Battles",
-                    ],
-                    datatype=[
-                        "number",
-                        "str",
-                        "number",
-                        "number",
-                        "number",
-                        "number",
-                        "number",
-                    ],
-                    label="Model Rankings",
-                    interactive=False,
-                    wrap=True,
-                )
-
-                ranking_last_update = gr.Markdown("**Last Updated:** Not loaded yet")
-
-                # Timer for auto-refresh every 10 minutes
-                ranking_timer = gr.Timer(value=600.0, active=True)
+            ranking_table, ranking_last_update, ranking_timer = create_ranking_tab()
 
         # Event handlers
         # Create state variables for the run buttons
@@ -1620,7 +1443,7 @@ def build_ui():
                         state0["interactions"].extend(interactions)
                 return log_sandbox_telemetry_gradio_fn(state0["sandbox_state"], sandbox_ui)
             return None
-            
+
         def log_telemetry_b(state1, sandbox_ui):
             if state1 and "sandbox_state" in state1:
                 # Print user interactions for debugging
@@ -1633,7 +1456,7 @@ def build_ui():
                         state1["interactions"].extend(interactions)
                 return log_sandbox_telemetry_gradio_fn(state1["sandbox_state"], sandbox_ui)
             return None
-        
+
         sandbox_component_a.change(
             fn=log_telemetry_a,
             inputs=[state0_var, sandbox_component_a],
@@ -1649,24 +1472,17 @@ def build_ui():
 
         # Create a wrapper function that handles both the main execution and state update
         def send_and_update_state(state0, state1, text, temp, max_tok, model_a, model_b):
-            
+
             # Hide vote buttons immediately when generation starts
             initial_vote_visibility = False
-            
+
             # Call the main function
             result = add_text_and_generate(state0, state1, text, temp, max_tok, model_a, model_b)
             # Extract the state from the result
             new_state0, new_state1 = result[0], result[1]
 
             # Check if both models have output and are not generating to show vote buttons
-            show_vote_buttons = (
-                new_state0
-                and new_state0.get("has_output", False)
-                and not new_state0.get("generating", False)
-                and new_state1
-                and new_state1.get("has_output", False)
-                and not new_state1.get("generating", False)
-            )
+            show_vote_buttons = should_show_vote_buttons(new_state0, new_state1)
 
             # Return all the original outputs plus the updated state for run buttons
             # Make sure all outputs are properly formatted for their expected types
@@ -1675,8 +1491,12 @@ def build_ui():
                 new_state1,  # state1
                 result[2],  # chatbot_a (chat0)
                 result[3],  # chatbot_b (chat1)
-                result[4]["content"] if isinstance(result[4], dict) else result[4],  # response_a (response0)
-                result[5]["content"] if isinstance(result[5], dict) else result[5],  # response_b (response1)
+                (
+                    result[4]["content"] if isinstance(result[4], dict) else result[4]
+                ),  # response_a (response0)
+                (
+                    result[5]["content"] if isinstance(result[5], dict) else result[5]
+                ),  # response_b (response1)
                 result[6],  # code_a (code0)
                 result[7],  # code_b (code1)
                 result[10] if len(result) > 10 else "",  # sandbox_state0
@@ -2035,13 +1855,12 @@ def build_ui():
             ],
         )
 
-        # Vote button handlers
-        def vote_and_clear(state0, state1, vote_type):
-            # First save the vote (now runs in background)
+        # Setup vote handlers
+        def process_vote(state0, state1, vote_type, current_text):
+            # Save the vote and get updates
             message, ranking_update, last_update = handle_vote(
                 state0, state1, vote_type
             )
-            
             # Get the model names from the current session
             model_a = state0["model_name"] if state0 else "Unknown"
             model_b = state1["model_name"] if state1 else "Unknown"
@@ -2057,23 +1876,23 @@ def build_ui():
             
             # Clear everything and start fresh immediately, but preserve examples
             return (
-                "Thank you for your vote! 🎉",  # vote status with thank you message
-                None,  # Clear state0
-                None,  # Clear state1
-                "",  # Clear chatbot_a
-                "",  # Clear chatbot_b
-                "",  # Clear response_a
-                "",  # Clear response_b
-                "",  # Clear code_a
-                "",  # Clear code_b
-                "",  # Clear sandbox_view_a
-                "",  # Clear sandbox_view_b
-                gr.update(visible=False),  # Hide sandbox_component_a
-                gr.update(visible=False),  # Hide sandbox_component_b
-                "**Conversation:** 0 turns | **Total Messages:** 0",  # Reset chat_stats_a
-                "**Conversation:** 0 turns | **Total Messages:** 0",  # Reset chat_stats_b
-                f"**Model A:** {model_a}",  # Update model_display_a
-                f"**Model B:** {model_b}",  # Update model_display_b
+                message,  # vote status message
+                gr.update(),  # Keep state0 unchanged
+                gr.update(),  # Keep state1 unchanged
+                gr.update(),  # Keep chatbot_a unchanged
+                gr.update(),  # Keep chatbot_b unchanged
+                gr.update(),  # Keep response_a unchanged
+                gr.update(),  # Keep response_b unchanged
+                gr.update(),  # Keep code_a unchanged
+                gr.update(),  # Keep code_b unchanged
+                gr.update(),  # Keep sandbox_view_a unchanged
+                gr.update(),  # Keep sandbox_view_b unchanged
+                gr.update(),  # Keep sandbox_component_a unchanged
+                gr.update(),  # Keep sandbox_component_b unchanged
+                gr.update(),  # Keep chat_stats_a unchanged
+                gr.update(),  # Keep chat_stats_b unchanged
+                gr.update(),  # Keep model_display_a unchanged
+                gr.update(),  # Keep model_display_b unchanged
                 gr.update(visible=False),  # Hide vote_section
                 gr.update(visible=False),  # Hide vote_buttons_row
                 None,  # Reset state0_var
@@ -2095,8 +1914,8 @@ def build_ui():
             (vote_both_bad_btn, "both_bad"),
         ]:
             vote_btn.click(
-                fn=vote_and_clear,
-                inputs=[state0_var, state1_var, gr.State(vote_type)],
+                fn=process_vote,
+                inputs=[state0_var, state1_var, gr.State(vote_type), text_input],
                 outputs=[
                     vote_status,  # vote status message
                     state0_var,  # state0
@@ -2129,45 +1948,8 @@ def build_ui():
                 ],
             )
 
-        # Ranking handlers
-        def update_ranking_display():
-            df = load_ranking_data()
-            if df.empty:
-                return gr.update(value=df), "**Last Updated:** No data available"
-
-            last_update = (
-                ranking_last_updated.strftime("%Y-%m-%d %H:%M:%S")
-                if ranking_last_updated
-                else "Unknown"
-            )
-            return gr.update(value=df), f"**Last Updated:** {last_update}"
-
-        def force_update_ranking_display():
-            """Force update ranking data from HuggingFace (for timer)"""
-            df = load_ranking_data(force_reload=True)
-            if df.empty:
-                return gr.update(value=df), "**Last Updated:** No data available"
-
-            last_update = (
-                ranking_last_updated.strftime("%Y-%m-%d %H:%M:%S")
-                if ranking_last_updated
-                else "Unknown"
-            )
-            return gr.update(value=df), f"**Last Updated:** {last_update}"
-
-        # Timer tick handler for auto-refresh with force reload
-        ranking_timer.tick(
-            fn=force_update_ranking_display,
-            inputs=[],
-            outputs=[ranking_table, ranking_last_update],
-        )
-
-        # Auto-load ranking on startup
-        demo.load(
-            fn=update_ranking_display,
-            inputs=[],
-            outputs=[ranking_table, ranking_last_update],
-        )
+        # Setup ranking handlers
+        setup_ranking_handlers(demo, ranking_table, ranking_last_update, ranking_timer)
 
     return demo
 
